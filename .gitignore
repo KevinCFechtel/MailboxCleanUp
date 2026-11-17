@@ -29,6 +29,20 @@ go.work.sum
 # env file
 .env
 
+# Local configuration, encrypted credentials and any key/token material
+/config/
+/config.json
+/credentials.age
+*.age
+*.key
+*.pem
+web-token
+/mailboxcleanup
+/dist/
+*.sarif
+.socket-test-*/
+.daemon-test-*/
+
 # Editor/IDE
 # .idea/
 # .vscode/

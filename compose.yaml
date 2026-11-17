@@ -1,0 +1,33 @@
+services:
+  mailboxcleanup:
+    # Built and scanned by GitHub Actions; no local toolchain/build required.
+    image: ghcr.io/kevincfechtel/mailboxcleanup:${MAILBOXCLEANUP_VERSION:-latest}
+    container_name: mailboxcleanup
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    ulimits:
+      core: 0
+    stop_grace_period: 30s
+    tmpfs:
+      - /run/mailboxcleanup:rw,noexec,nosuid,nodev,size=1m,mode=0700,uid=65532,gid=65532
+    volumes:
+      # Mount the directory so atomic replacement of credentials.age is visible.
+      - ./config:/config:ro
+    ports:
+      # Never change this to 0.0.0.0 without a secure access design.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # Locked is healthy: unlocking is intentionally manual after each restart.
+      test: ["CMD", "/usr/local/bin/mailboxcleanup", "status"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

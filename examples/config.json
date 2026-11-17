@@ -1,0 +1,39 @@
+{
+  "credentials_file": "/config/credentials.age",
+  "schedule": "0 3 * * *",
+  "timezone": "Europe/Berlin",
+  "dry_run": true,
+  "max_messages_per_rule": 1000,
+  "job_timeout": "10m",
+  "command_timeout": "30s",
+  "socket": "/run/mailboxcleanup/control.sock",
+  "web": {
+    "enabled": true,
+    "listen": "0.0.0.0:8080",
+    "token_file": "/config/web-token",
+    "allow_insecure_http": true,
+    "secure_cookies": false
+  },
+  "accounts": [
+    {
+      "name": "personal",
+      "server": "imap.example.com:993",
+      "tls_mode": "tls",
+      "rules": [
+        {
+          "name": "archive-inbox",
+          "action": "archive",
+          "mailbox": "INBOX",
+          "destination": "Archive",
+          "older_than_days": 90
+        },
+        {
+          "name": "empty-trash",
+          "action": "delete",
+          "mailbox": "Trash",
+          "older_than_days": 30
+        }
+      ]
+    }
+  ]
+}

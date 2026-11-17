@@ -1,0 +1,28 @@
+{
+  "credentials_file": "/config/credentials.age",
+  "schedule": "0 3 * * *",
+  "timezone": "Europe/Berlin",
+  "dry_run": true,
+  "max_messages_per_rule": 1000,
+  "job_timeout": "10m",
+  "command_timeout": "30s",
+  "socket": "/run/mailboxcleanup/control.sock",
+  "web": {
+    "enabled": false
+  },
+  "accounts": [
+    {
+      "name": "personal",
+      "server": "imap.example.com:993",
+      "tls_mode": "tls",
+      "rules": [
+        {
+          "name": "empty-trash",
+          "action": "delete",
+          "mailbox": "Trash",
+          "older_than_days": 30
+        }
+      ]
+    }
+  ]
+}

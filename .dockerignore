@@ -1,0 +1,11 @@
+# Allowlist: local credentials, keys, tokens, Git metadata and documentation
+# must never enter the Docker build context.
+*
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!Dockerfile
+!.dockerignore

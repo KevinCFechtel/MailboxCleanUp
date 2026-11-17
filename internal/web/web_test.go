@@ -1,0 +1,169 @@
+package web
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"github.com/KevinCFechtel/MailboxCleanUp/internal/config"
+	"github.com/KevinCFechtel/MailboxCleanUp/internal/job"
+	"github.com/KevinCFechtel/MailboxCleanUp/internal/secrets"
+)
+
+const testToken = "test-token-with-at-least-32-characters"
+
+func uiFixture(t *testing.T) (*UI, string) {
+	t.Helper()
+	dir := t.TempDir()
+	id, _ := age.GenerateX25519Identity()
+	var buf bytes.Buffer
+	_ = secrets.Encrypt(&buf, secrets.Credentials{Accounts: map[string]secrets.Credential{"personal": {Username: "user", Password: "mail-password"}}}, id.Recipient())
+	path := filepath.Join(dir, "credentials.age")
+	_ = os.WriteFile(path, buf.Bytes(), 0600)
+	tokenPath := filepath.Join(dir, "token")
+	_ = os.WriteFile(tokenPath, []byte(testToken), 0600)
+	engine := &job.Engine{Config: config.Config{JobTimeout: "1s"}, Store: secrets.New(path, []string{"personal"})}
+	service := job.NewService(engine, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ui, err := New(context.Background(), config.Web{TokenFile: tokenPath, SecureCookies: true}, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ui, id.String()
+}
+
+func request(handler http.Handler, method, path string, values url.Values, cookie *http.Cookie, origin string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(values.Encode()))
+	if method == http.MethodPost {
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	if origin != "" {
+		r.Header.Set("Origin", origin)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	return w
+}
+
+func logIn(t *testing.T, handler http.Handler) (*http.Cookie, string) {
+	t.Helper()
+	w := request(handler, "POST", "/login", url.Values{"token": {testToken}}, nil, "")
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("login failed: %d", w.Code)
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode {
+		t.Fatal("unsafe session cookie")
+	}
+	w = request(handler, "GET", "/", nil, cookies[0], "")
+	match := regexp.MustCompile(`name="csrf" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	if len(match) != 2 {
+		t.Fatal("missing CSRF field")
+	}
+	return cookies[0], match[1]
+}
+
+func TestUnlockLockAndLogout(t *testing.T) {
+	ui, key := uiFixture(t)
+	handler := ui.Handler()
+	cookie, csrf := logIn(t, handler)
+	w := request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {key}}, cookie, "")
+	if w.Code != http.StatusOK || !ui.service.Status().Unlocked {
+		t.Fatalf("unlock failed: %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), key) || strings.Contains(w.Body.String(), "mail-password") {
+		t.Fatal("secret reflected into page")
+	}
+	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Content-Security-Policy") == "" {
+		t.Fatal("missing security headers")
+	}
+	w = request(handler, "POST", "/logout", url.Values{"csrf": {csrf}}, cookie, "")
+	if w.Code != http.StatusSeeOther || !ui.service.Status().Unlocked {
+		t.Fatal("logout must not lock cron jobs")
+	}
+	w = request(handler, "POST", "/lock", url.Values{"csrf": {csrf}}, cookie, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatal("invalidated session still works")
+	}
+	cookie, csrf = logIn(t, handler)
+	w = request(handler, "POST", "/lock", url.Values{"csrf": {csrf}}, cookie, "")
+	if w.Code != http.StatusOK || ui.service.Status().Unlocked {
+		t.Fatal("web lock failed")
+	}
+}
+
+func TestAuthenticationCSRFAndOriginRequired(t *testing.T) {
+	ui, key := uiFixture(t)
+	h := ui.Handler()
+	values := url.Values{"key": {key}}
+	if w := request(h, "POST", "/unlock", values, nil, ""); w.Code != http.StatusUnauthorized {
+		t.Fatal("anonymous unlock allowed")
+	}
+	cookie, csrf := logIn(t, h)
+	if w := request(h, "POST", "/unlock", values, cookie, ""); w.Code != http.StatusForbidden {
+		t.Fatal("missing CSRF accepted")
+	}
+	values.Set("csrf", csrf)
+	if w := request(h, "POST", "/unlock", values, cookie, "https://evil.example"); w.Code != http.StatusForbidden {
+		t.Fatal("cross-origin unlock accepted")
+	}
+	if ui.service.Status().Unlocked {
+		t.Fatal("rejected requests changed state")
+	}
+	// Mutations cannot be induced with a GET request.
+	if w := request(h, "GET", "/unlock", nil, cookie, ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("unexpected GET status: %d", w.Code)
+	}
+}
+
+func TestRateLimitsAndExpiry(t *testing.T) {
+	ui, _ := uiFixture(t)
+	h := ui.Handler()
+	cookie, _ := logIn(t, h)
+	ui.mu.Lock()
+	for hash, s := range ui.sessions {
+		s.Expires = time.Now().Add(-time.Second)
+		ui.sessions[hash] = s
+	}
+	ui.mu.Unlock()
+	if w := request(h, "POST", "/lock", nil, cookie, ""); w.Code != http.StatusUnauthorized {
+		t.Fatal("expired session accepted")
+	}
+	for range 4 {
+		w := request(h, "POST", "/login", url.Values{"token": {"bad"}}, nil, "")
+		if w.Code != http.StatusUnauthorized {
+			t.Fatal("unexpected rate limiting threshold")
+		}
+	}
+	if w := request(h, "POST", "/login", url.Values{"token": {testToken}}, nil, ""); w.Code != http.StatusTooManyRequests {
+		t.Fatal("login rate limit missing")
+	}
+}
+
+func TestOversizedInputAndUnsafeTokenFile(t *testing.T) {
+	ui, _ := uiFixture(t)
+	h := ui.Handler()
+	w := request(h, "POST", "/login", url.Values{"token": {strings.Repeat("x", 10000)}}, nil, "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatal("oversized login accepted")
+	}
+	if err := os.Chmod(ui.config.TokenFile, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(context.Background(), ui.config, ui.service); err == nil {
+		t.Fatal("world-readable token file accepted")
+	}
+}

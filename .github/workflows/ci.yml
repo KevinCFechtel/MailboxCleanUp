@@ -1,0 +1,205 @@
+name: CI, security, and container
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Test and Go security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Validate Docker Compose configuration
+        run: docker compose config --quiet
+      - name: Run tests with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Run go vet
+        run: go vet ./...
+      - name: Build binary
+        run: go build -trimpath ./cmd/mailboxcleanup
+      - name: Scan reachable Go vulnerabilities
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
+        with:
+          repo-checkout: false
+          go-version-file: go.mod
+          cache: false
+          go-package: ./...
+
+  dependency-review:
+    name: Dependency review
+    if: >-
+      github.event_name == 'pull_request' &&
+      (!github.event.repository.private || vars.ENABLE_GITHUB_SECURITY == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          show-openssf-scorecard: true
+
+  codeql:
+    name: CodeQL
+    # Private repositories need a GitHub plan with the relevant security features.
+    if: "!github.event.repository.private || vars.ENABLE_GITHUB_SECURITY == 'true'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: go
+          build-mode: manual
+      - name: Build for CodeQL
+        run: go build ./...
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: /language:go
+
+  container:
+    name: Build and scan (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build local image for security scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          platforms: linux/${{ matrix.arch }}
+          push: false
+          tags: mailboxcleanup:scan-${{ matrix.arch }}
+          cache-from: type=gha,scope=container-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.arch }}
+      - name: Scan container image with pinned Trivy
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$PWD:/workspace" \
+            aquasec/trivy@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6 \
+            image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output "/workspace/trivy-${ARCH}.sarif" \
+            "mailboxcleanup:scan-${ARCH}"
+      - name: Upload Trivy results to GitHub Security
+        if: >-
+          always() &&
+          hashFiles(format('trivy-{0}.sarif', matrix.arch)) != '' &&
+          (!github.event.repository.private || vars.ENABLE_GITHUB_SECURITY == 'true') &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          sarif_file: trivy-${{ matrix.arch }}.sarif
+          category: trivy-container-${{ matrix.arch }}
+
+  publish:
+    name: Publish release container
+    if: >-
+      !cancelled() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.quality.result == 'success' &&
+      needs.container.result == 'success' &&
+      (needs.codeql.result == 'success' || needs.codeql.result == 'skipped')
+    needs: [quality, codeql, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Validate semantic version tag
+        run: |
+          python3 - <<'PY'
+          import os, re
+          number = r"(0|[1-9][0-9]*)"
+          identifier = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+          pattern = rf"v{number}\.{number}\.{number}(?:-{identifier}(?:\.{identifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+          if not re.fullmatch(pattern, os.environ["GITHUB_REF_NAME"]):
+              raise SystemExit("Release tags must use semantic versioning, for example v1.2.3")
+          PY
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Publish multi-platform image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=container-amd64
+            type=gha,scope=container-arm64
+          provenance: mode=max
+          sbom: true
