@@ -120,7 +120,7 @@ func newEngine(c config.Config) *job.Engine {
 	engine := &job.Engine{Config: c, Store: secrets.New(c.CredentialsFile, names), Connect: mail.Connector(timeout)}
 	if c.Healthchecks.Enabled {
 		pingTimeout, _ := time.ParseDuration(c.Healthchecks.Timeout)
-		engine.NotifySuccess = healthchecks.New(c.Healthchecks.URLFile, pingTimeout).Ping
+		engine.NotifySuccess = healthchecks.New(c.Healthchecks.URLFile, pingTimeout, c.Healthchecks.AllowInsecureURLPermissions).Ping
 	}
 	return engine
 }
@@ -137,6 +137,9 @@ func serve(ctx context.Context, engine *job.Engine) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if engine.Config.Healthchecks.Enabled && engine.Config.Healthchecks.AllowInsecureURLPermissions {
+		log.Warn("healthchecks URL POSIX permission check disabled: restrict file access using host ACLs")
+	}
 	service := job.NewService(engine, log)
 	listener, err := control.Listen(engine.Config.Socket)
 	if err != nil {

@@ -36,6 +36,35 @@ func TestPrivateOutputNeverOverwrites(t *testing.T) {
 	}
 }
 
+func TestNewEngineHealthchecksURLPermissions(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "healthchecks-url")
+	// An invalid endpoint proves validation is reached without network access.
+	if err := os.WriteFile(file, []byte("not a URL"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for name, allow := range map[string]bool{"strict": false, "NAS": true} {
+		t.Run(name, func(t *testing.T) {
+			engine := newEngine(config.Config{Healthchecks: config.Healthchecks{
+				Enabled: true, URLFile: file, Timeout: "1s", AllowInsecureURLPermissions: allow,
+			}})
+			if engine.NotifySuccess == nil {
+				t.Fatal("healthchecks notifier missing")
+			}
+			want := "group/other permissions"
+			if allow {
+				want = "must be HTTPS"
+			}
+			err := engine.NotifySuccess(context.Background(), job.Counts{})
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected %q error, got %v", want, err)
+			}
+		})
+	}
+}
+
 func TestServeLockedUnlockRunLockAndStopWithWebDisabled(t *testing.T) {
 	dir, err := os.MkdirTemp(".", ".daemon-test-")
 	if err != nil {

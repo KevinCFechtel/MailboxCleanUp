@@ -29,10 +29,11 @@ type Config struct {
 }
 
 type Healthchecks struct {
-	Enabled      bool   `json:"enabled"`
-	URLFile      string `json:"url_file"`
-	Timeout      string `json:"timeout"`
-	PingOnDryRun bool   `json:"ping_on_dry_run"`
+	Enabled                     bool   `json:"enabled"`
+	URLFile                     string `json:"url_file"`
+	AllowInsecureURLPermissions bool   `json:"allow_insecure_url_permissions"`
+	Timeout                     string `json:"timeout"`
+	PingOnDryRun                bool   `json:"ping_on_dry_run"`
 }
 
 type Web struct {

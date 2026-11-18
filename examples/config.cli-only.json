@@ -10,6 +10,7 @@
   "healthchecks": {
     "enabled": false,
     "url_file": "/config/healthchecks-url",
+    "allow_insecure_url_permissions": false,
     "timeout": "5s",
     "ping_on_dry_run": false
   },
