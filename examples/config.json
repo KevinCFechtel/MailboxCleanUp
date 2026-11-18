@@ -17,6 +17,7 @@
     "enabled": true,
     "listen": "0.0.0.0:8080",
     "token_file": "/config/web-token",
+    "allow_insecure_token_permissions": false,
     "allow_insecure_http": true,
     "secure_cookies": false
   },
