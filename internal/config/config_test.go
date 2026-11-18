@@ -26,7 +26,7 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if !c.DryRun || c.Web.Enabled || !c.Web.SecureCookies || c.Web.AllowInsecureTokenPermissions || c.MaxMessagesPerRule != 1000 {
 		t.Fatalf("unsafe defaults: %+v", c)
 	}
-	if c.Healthchecks.Enabled || c.Healthchecks.PingOnDryRun || c.Healthchecks.Timeout != "5s" {
+	if c.Healthchecks.Enabled || c.Healthchecks.PingOnDryRun || c.Healthchecks.AllowInsecureURLPermissions || c.Healthchecks.Timeout != "5s" {
 		t.Fatal("healthchecks must be opt-in, including dry-run pings")
 	}
 }
@@ -41,6 +41,21 @@ func TestWebTokenPermissionOptIn(t *testing.T) {
 			}
 			if c.Web.AllowInsecureTokenPermissions != (value == "true") {
 				t.Fatal("web token permission option was not loaded")
+			}
+		})
+	}
+}
+
+func TestHealthchecksURLPermissionOptIn(t *testing.T) {
+	for _, value := range []string{"false", "true"} {
+		t.Run(value, func(t *testing.T) {
+			data := strings.Replace(minimal, `"credentials_file"`, `"healthchecks":{"allow_insecure_url_permissions":`+value+`},"credentials_file"`, 1)
+			c, err := load(t, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Healthchecks.AllowInsecureURLPermissions != (value == "true") {
+				t.Fatal("healthchecks URL permission option was not loaded")
 			}
 		})
 	}
@@ -72,6 +87,7 @@ func TestRejectInvalidConfiguration(t *testing.T) {
 		"embedded timezone":                   strings.Replace(minimal, `"credentials_file"`, `"schedule":"CRON_TZ=UTC * * * *","credentials_file"`, 1),
 		"bad timeout":                         strings.Replace(minimal, `"credentials_file"`, `"job_timeout":"0s","credentials_file"`, 1),
 		"non-boolean token permission option": strings.Replace(minimal, `"credentials_file"`, `"web":{"allow_insecure_token_permissions":"true"},"credentials_file"`, 1),
+		"non-boolean URL permission option":   strings.Replace(minimal, `"credentials_file"`, `"healthchecks":{"allow_insecure_url_permissions":"true"},"credentials_file"`, 1),
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

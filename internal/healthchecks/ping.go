@@ -20,17 +20,19 @@ import (
 )
 
 type Pinger struct {
-	urlFile string
-	client  *http.Client
+	urlFile                     string
+	allowInsecureURLPermissions bool
+	client                      *http.Client
 }
 
-func New(urlFile string, timeout time.Duration) *Pinger {
+func New(urlFile string, timeout time.Duration, allowInsecureURLPermissions bool) *Pinger {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.MaxResponseHeaderBytes = 8192
 	transport.DisableKeepAlives = true
 	return &Pinger{
-		urlFile: urlFile,
+		urlFile:                     urlFile,
+		allowInsecureURLPermissions: allowInsecureURLPermissions,
 		client: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -43,7 +45,7 @@ func New(urlFile string, timeout time.Duration) *Pinger {
 
 func (p *Pinger) Ping(ctx context.Context, counts job.Counts) error {
 	// Reload on every job to support URL rotation without a process restart.
-	endpoint, err := readURL(p.urlFile)
+	endpoint, err := readURL(p.urlFile, p.allowInsecureURLPermissions)
 	if err != nil {
 		return err
 	}
@@ -69,15 +71,24 @@ func (p *Pinger) Ping(ctx context.Context, counts job.Counts) error {
 	return nil
 }
 
-func readURL(file string) (string, error) {
+func readURL(file string, allowInsecurePermissions bool) (string, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return "", errors.New("cannot open healthchecks URL file")
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 4096 {
-		return "", errors.New("healthchecks URL must be a private regular file (0400 or 0600), at most 4096 bytes")
+	if err != nil {
+		return "", errors.New("cannot stat healthchecks URL file")
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("healthchecks URL must be a regular file")
+	}
+	if info.Size() > 4096 {
+		return "", errors.New("healthchecks URL file must be at most 4096 bytes")
+	}
+	if !allowInsecurePermissions && info.Mode().Perm()&0077 != 0 {
+		return "", errors.New("healthchecks URL file has group/other permissions; use mode 0600 or 0400, or explicitly set healthchecks.allow_insecure_url_permissions for ACL-managed storage")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 4097))
 	if err != nil || len(data) > 4096 {

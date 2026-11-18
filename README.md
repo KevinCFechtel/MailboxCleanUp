@@ -147,7 +147,8 @@ Das ist unabhängig vom Mount-Modus: Zum **Erzeugen** der Token-Datei benötigt
 der Setup-Container `/config:rw`; im normalen Betrieb genügt `/config:ro`.
 Auch ein `:rw`-Mount ist zulässig, er schaltet die Dateirechteprüfung nicht um.
 Die Option erzeugt keine fehlende Token-Datei und ändert keine Dateirechte.
-Sie betrifft weder den Kontroll-Socket noch die healthchecks.io-URL-Datei.
+Sie betrifft weder den Kontroll-Socket noch die healthchecks.io-URL-Datei
+(dafür gibt es separat `healthchecks.allow_insecure_url_permissions`).
 Nach einer Konfigurationsänderung den Dienst neu starten.
 
 ### 4. Starten und Weboberfläche sicher erreichen
@@ -272,6 +273,7 @@ Konfiguration:
 "healthchecks": {
   "enabled": true,
   "url_file": "/config/healthchecks-url",
+  "allow_insecure_url_permissions": false,
   "timeout": "5s",
   "ping_on_dry_run": false
 }
@@ -283,7 +285,8 @@ Konfiguration:
    `https://hc-ping.com/00000000-0000-0000-0000-000000000001`.
    Keine `/start`-, `/fail`-, `/log`-, Exit-Code- oder Slug-URL verwenden.
 3. Datei für den Container-Benutzer `65532:65532` lesbar machen und Dateimodus
-   `0400` oder `0600` setzen. Die URL ist ein Geheimnis: Wer sie kennt, kann
+   `0400` oder `0600` setzen oder bei NAS-ACLs die unten beschriebene Option verwenden.
+   Die URL ist ein Geheimnis: Wer sie kennt, kann
    Erfolgsmeldungen vortäuschen. Nicht in Git, Logs oder Shell-Argumente schreiben.
 4. Bei healthchecks.io denselben Cron-Zeitplan und dieselbe Zeitzone wie beim Job
    einstellen. Für `0 3 * * *`, `Europe/Berlin` und `job_timeout: "10m"` z. B.
@@ -292,6 +295,24 @@ Konfiguration:
    Prüfen, dass der Check aktiv überwacht wird und der Ping eingegangen ist.
    Ein neu angelegter, noch nicht gestarteter Check kann bis zum ersten Ping
    auf seine Aktivierung warten.
+
+**Synology/NAS:** Wenn die Datei über Host-/NAS-ACLs geschützt ist, aber
+POSIX-Gruppen-/Fremdrechte meldet, im bestehenden `healthchecks`-Objekt ergänzen:
+
+```json
+"allow_insecure_url_permissions": true
+```
+
+Standard ist `false`. Bei `true` entfällt ausschließlich die POSIX-Rechteprüfung
+dieser Datei. Lesbarkeit, regulärer Dateityp, maximal 4096 Bytes sowie die
+Validierung der HTTPS-Erfolgs-URL mit Check-UUID bleiben erforderlich. Der
+Dienst wertet NAS-ACLs nicht selbst aus; den Zugriff auf Datei und Freigabe
+auf vertrauenswürdige Benutzer beschränken. Bei aktiviertem Monitoring gibt
+der Dienst beim Start eine Warnung aus. Die Webtoken-Option ersetzt diese
+separate Einstellung nicht. Nach einer Konfigurationsänderung neu starten und
+erneut entsperren. Zum Testen muss kein weiterer Löschlauf stattfinden:
+`dry_run: true` und `healthchecks.ping_on_dry_run: true` verwenden oder den
+nächsten regulären Lauf abwarten.
 
 **„Schnell“ hängt vom Intervall ab:** Bei einem täglichen Job fällt eine
 ausbleibende Entsperrung unter Umständen erst am nächsten Tag plus Grace Time
@@ -362,6 +383,7 @@ Unbekannte Felder werden abgewiesen, damit Tippfehler nicht unbemerkt bleiben.
 | `web.allow_insecure_token_permissions` | Standardmäßig `false`; bei `true` nur die POSIX-Rechteprüfung der Webtoken-Datei überspringen, z. B. bei NAS-ACLs; Zugriff dann auf dem Host absichern |
 | `healthchecks.enabled` | Optionales Erfolgsmonitoring, standardmäßig `false` |
 | `healthchecks.url_file` | Private Datei mit HTTPS-Erfolgs-URL und Check-UUID |
+| `healthchecks.allow_insecure_url_permissions` | Standardmäßig `false`; bei `true` nur die POSIX-Rechteprüfung der URL-Datei überspringen; Zugriff dann über Host-/NAS-ACLs absichern |
 | `healthchecks.timeout` | Positiver HTTP-Timeout bis 1 Minute, standardmäßig `5s`; zusätzlich gilt der Job-Timeout |
 | `healthchecks.ping_on_dry_run` | Dry-Run ebenfalls melden, standardmäßig `false` |
 | `accounts[].name` | Eindeutiger Alias; derselbe Name wird in den verschlüsselten Zugangsdaten verwendet |

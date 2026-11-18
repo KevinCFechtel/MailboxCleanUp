@@ -78,7 +78,12 @@ zugreifen. Dies wird nicht durch Verschlüsselung im Ruhezustand verhindert.
   eines Erfolgs; die Zähler lassen Rückschlüsse auf das Nachrichtenvolumen zu.
 - Die Ping-URL wird als lokales Geheimnis behandelt und nicht protokolliert.
   HTTPS mit Zertifikatsprüfung ist verpflichtend; Redirects und Start-/Fehler-
-  Endpunkte werden abgewiesen. Die Datei darf keine Gruppen-/Fremdrechte haben.
+  Endpunkte werden abgewiesen. Standardmäßig werden Dateien mit POSIX-Gruppen-/
+  Fremdrechten abgewiesen. Für ACL-verwaltete NAS-Freigaben lässt sich nur diese
+  Rechteprüfung separat mit `healthchecks.allow_insecure_url_permissions: true`
+  abschalten (Standard: `false`, Startwarnung bei aktiviertem Monitoring).
+  Dann muss der Betreiber den Zugriff über Host-/NAS-ACLs absichern. Lesbarkeit,
+  regulärer Dateityp, Größenlimit und URL-Validierung bleiben erforderlich.
 - Fehlende Pings erkennen Sperre/Stillstand nur nach dem bei healthchecks.io
   eingestellten Zeitplan und der Grace Time, nicht unmittelbar beim Neustart.
 
