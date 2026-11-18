@@ -36,13 +36,14 @@ type Healthchecks struct {
 }
 
 type Web struct {
-	Enabled           bool   `json:"enabled"`
-	Listen            string `json:"listen"`
-	TokenFile         string `json:"token_file"`
-	TLSCertFile       string `json:"tls_cert_file"`
-	TLSKeyFile        string `json:"tls_key_file"`
-	AllowInsecureHTTP bool   `json:"allow_insecure_http"`
-	SecureCookies     bool   `json:"secure_cookies"`
+	Enabled                       bool   `json:"enabled"`
+	Listen                        string `json:"listen"`
+	TokenFile                     string `json:"token_file"`
+	AllowInsecureTokenPermissions bool   `json:"allow_insecure_token_permissions"`
+	TLSCertFile                   string `json:"tls_cert_file"`
+	TLSKeyFile                    string `json:"tls_key_file"`
+	AllowInsecureHTTP             bool   `json:"allow_insecure_http"`
+	SecureCookies                 bool   `json:"secure_cookies"`
 }
 
 type Account struct {

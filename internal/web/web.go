@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"os"
@@ -55,14 +56,26 @@ type UI struct {
 
 func New(ctx context.Context, c config.Web, service *job.Service) (*UI, error) {
 	info, err := os.Stat(c.TokenFile)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("web token must be a private regular file (mode 0600 or 0400), at most 4096 bytes")
+	if err != nil {
+		return nil, fmt.Errorf("cannot stat web token file; check web.token_file and container mount: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("web token must be a regular file, not a directory or device")
+	}
+	if info.Size() > 4096 {
+		return nil, errors.New("web token file must be at most 4096 bytes")
+	}
+	if !c.AllowInsecureTokenPermissions && info.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("web token file has group/other permissions; use mode 0600 or 0400, or explicitly set web.allow_insecure_token_permissions for ACL-managed storage")
 	}
 	token, err := os.ReadFile(c.TokenFile)
 	if err != nil {
-		return nil, errors.New("cannot read web token")
+		return nil, fmt.Errorf("cannot read web token file; check container user permissions: %w", err)
 	}
 	defer clear(token)
+	if len(token) > 4096 {
+		return nil, errors.New("web token file must be at most 4096 bytes")
+	}
 	value := strings.TrimSpace(string(token))
 	if len(value) < 32 {
 		return nil, errors.New("web token must have at least 32 characters; use web-token to generate one")

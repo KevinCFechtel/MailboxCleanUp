@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -165,5 +166,80 @@ func TestOversizedInputAndUnsafeTokenFile(t *testing.T) {
 	}
 	if _, err := New(context.Background(), ui.config, ui.service); err == nil {
 		t.Fatal("world-readable token file accepted")
+	}
+}
+
+func TestTokenFilePermissions(t *testing.T) {
+	for _, mode := range []os.FileMode{0400, 0600, 0640, 0644, 0660, 0666} {
+		for _, allow := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%04o/allow=%t", mode, allow), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "token")
+				if err := os.WriteFile(path, []byte(testToken), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, mode); err != nil {
+					t.Fatal(err)
+				}
+				ui, err := New(context.Background(), config.Web{
+					TokenFile: path, AllowInsecureTokenPermissions: allow, SecureCookies: true,
+				}, nil)
+				if !allow && mode&0077 != 0 {
+					if err == nil || !strings.Contains(err.Error(), "web.allow_insecure_token_permissions") {
+						t.Fatalf("expected actionable permission error, got %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				w := request(ui.Handler(), "POST", "/login", url.Values{"token": {testToken}}, nil, "")
+				if w.Code != http.StatusSeeOther {
+					t.Fatalf("login failed: %d", w.Code)
+				}
+				w = request(ui.Handler(), "POST", "/login", url.Values{"token": {"wrong"}}, nil, "")
+				if w.Code != http.StatusUnauthorized {
+					t.Fatal("invalid token accepted")
+				}
+			})
+		}
+	}
+}
+
+func TestInvalidTokenFileRegardlessOfPermissionsOption(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		for _, kind := range []string{"missing", "directory", "oversized", "short", "empty"} {
+			t.Run(fmt.Sprintf("%s/allow=%t", kind, allow), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "token")
+				var want string
+				switch kind {
+				case "missing":
+					want = "cannot stat web token file"
+				case "directory":
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+					want = "must be a regular file"
+				default:
+					var content string
+					switch kind {
+					case "oversized":
+						content, want = strings.Repeat("x", 4097), "at most 4096 bytes"
+					case "short":
+						content, want = strings.Repeat("x", 31), "at least 32 characters"
+					case "empty":
+						content, want = "", "at least 32 characters"
+					}
+					if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, err := New(context.Background(), config.Web{
+					TokenFile: path, AllowInsecureTokenPermissions: allow,
+				}, nil)
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("expected %q error, got %v", want, err)
+				}
+			})
+		}
 	}
 }

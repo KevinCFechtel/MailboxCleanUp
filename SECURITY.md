@@ -27,7 +27,14 @@ zugreifen. Dies wird nicht durch Verschlüsselung im Ruhezustand verhindert.
 ## Weboberfläche
 
 - Im Code standardmäßig deaktiviert; im Compose-Beispiel für Loopback/SSH aktiviert.
-- Separater zufälliger Zugangstoken, lokale Token-Datei nur für den Eigentümer lesbar.
+- Separater zufälliger Zugangstoken; standardmäßig verweigert der Dienst
+  Token-Dateien mit POSIX-Gruppen-/Fremdrechten.
+- Für ACL-verwaltete NAS-Freigaben kann ausschließlich diese Rechteprüfung mit
+  `web.allow_insecure_token_permissions: true` deaktiviert werden (Standard:
+  `false`, Startwarnung bei Aktivierung). Der Betreiber muss dann den Zugriff
+  über Host-/NAS-ACLs absichern; die Anwendung prüft diese ACLs nicht. Regulärer
+  Dateityp, Lesbarkeit, maximale Dateigröße und minimale Token-Länge bleiben
+  erforderlich. Die Option beeinflusst weder Socket- noch Monitoring-Rechte.
 - Serverseitige Sitzungen mit 15 Minuten absoluter Laufzeit, HttpOnly-Cookie,
   SameSite=Strict und konfigurierbarem Secure-Attribut. Keine lokale
   Browser-Speicherung des Schlüssels.

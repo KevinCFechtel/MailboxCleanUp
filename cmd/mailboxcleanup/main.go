@@ -152,6 +152,9 @@ func serve(ctx context.Context, engine *job.Engine) error {
 		if err != nil {
 			return err
 		}
+		if engine.Config.Web.AllowInsecureTokenPermissions {
+			log.Warn("web token POSIX permission check disabled: restrict file access using host ACLs")
+		}
 		webListener, err = net.Listen("tcp", engine.Config.Web.Listen)
 		if err != nil {
 			return errors.New("cannot bind web listener")

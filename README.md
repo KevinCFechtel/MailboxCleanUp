@@ -121,8 +121,34 @@ sudo chmod 0400 config/credentials.age config/web-token
 
 NAS-ACLs/Benutzer-Mapping gegebenenfalls passend einrichten. Den Web-Token nicht
 einfach weltweit lesbar machen: Der Dienst verweigert Token-Dateien mit
-Gruppen-/Fremdrechten. Spätere Bearbeitung dieser Dateien benötigt entsprechende
+Gruppen-/Fremdrechten standardmäßig. Für ACL-verwaltete NAS-Freigaben siehe den
+folgenden Abschnitt. Spätere Bearbeitung dieser Dateien benötigt entsprechende
 Host-Administratorrechte.
+
+#### Synology/NAS: Webtoken-Rechte über ACLs verwalten
+
+Wenn das NAS trotz eingeschränkter ACLs POSIX-Gruppen-/Fremdrechte meldet, kann
+die POSIX-Rechteprüfung gezielt abgeschaltet werden. Dazu im bestehenden
+`web`-Objekt von `config.json` ergänzen:
+
+```json
+"allow_insecure_token_permissions": true
+```
+
+Standard ist `false`. Bei `true` prüft der Dienst weiterhin, dass die Token-Datei
+existiert, eine lesbare reguläre Datei mit höchstens 4096 Bytes ist und einen
+Token mit mindestens 32 Zeichen enthält. Nur die Prüfung der POSIX-Gruppen-/
+Fremdrechte entfällt; beim Start wird eine Warnung ausgegeben. Die Anwendung
+wertet NAS-ACLs nicht selbst aus: Den Zugriff auf Datei und Freigabe über die
+NAS-Berechtigungen auf vertrauenswürdige Benutzer beschränken. Wer den Token
+lesen kann, kann sich an der Weboberfläche anmelden.
+
+Das ist unabhängig vom Mount-Modus: Zum **Erzeugen** der Token-Datei benötigt
+der Setup-Container `/config:rw`; im normalen Betrieb genügt `/config:ro`.
+Auch ein `:rw`-Mount ist zulässig, er schaltet die Dateirechteprüfung nicht um.
+Die Option erzeugt keine fehlende Token-Datei und ändert keine Dateirechte.
+Sie betrifft weder den Kontroll-Socket noch die healthchecks.io-URL-Datei.
+Nach einer Konfigurationsänderung den Dienst neu starten.
 
 ### 4. Starten und Weboberfläche sicher erreichen
 
@@ -333,6 +359,7 @@ Unbekannte Felder werden abgewiesen, damit Tippfehler nicht unbemerkt bleiben.
 | `max_messages_per_rule` | Positive Grenze, standardmäßig 1000; bei Überschreitung keine Änderung durch diese Regel |
 | `job_timeout` / `command_timeout` | Positive Go-Zeitspannen, standardmäßig `10m` / `30s` |
 | `socket` | Privater lokaler Kontroll-Socket |
+| `web.allow_insecure_token_permissions` | Standardmäßig `false`; bei `true` nur die POSIX-Rechteprüfung der Webtoken-Datei überspringen, z. B. bei NAS-ACLs; Zugriff dann auf dem Host absichern |
 | `healthchecks.enabled` | Optionales Erfolgsmonitoring, standardmäßig `false` |
 | `healthchecks.url_file` | Private Datei mit HTTPS-Erfolgs-URL und Check-UUID |
 | `healthchecks.timeout` | Positiver HTTP-Timeout bis 1 Minute, standardmäßig `5s`; zusätzlich gilt der Job-Timeout |
