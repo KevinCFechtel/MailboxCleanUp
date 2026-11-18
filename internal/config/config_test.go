@@ -26,6 +26,9 @@ func TestDefaultsAreSafe(t *testing.T) {
 	if !c.DryRun || c.Web.Enabled || !c.Web.SecureCookies || c.MaxMessagesPerRule != 1000 {
 		t.Fatalf("unsafe defaults: %+v", c)
 	}
+	if c.Healthchecks.Enabled || c.Healthchecks.PingOnDryRun || c.Healthchecks.Timeout != "5s" {
+		t.Fatal("healthchecks must be opt-in, including dry-run pings")
+	}
 }
 
 func TestShippedExamples(t *testing.T) {
@@ -97,5 +100,27 @@ func TestRuleValidation(t *testing.T) {
 	c.Accounts = append(c.Accounts, c.Accounts[0])
 	if c.Validate() == nil {
 		t.Fatal("duplicate account must be rejected")
+	}
+}
+
+func TestHealthchecksConfiguration(t *testing.T) {
+	c, err := load(t, minimal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Healthchecks.Enabled = true
+	if c.Validate() == nil {
+		t.Fatal("enabled monitoring without a URL file accepted")
+	}
+	c.Healthchecks.URLFile = "/config/healthchecks-url"
+	for _, timeout := range []string{"", "invalid", "0s", "-1s", "61s"} {
+		c.Healthchecks.Timeout = timeout
+		if c.Validate() == nil {
+			t.Error("invalid notification timeout accepted")
+		}
+	}
+	c.Healthchecks.Timeout = "5s"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

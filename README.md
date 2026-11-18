@@ -21,6 +21,8 @@ Vor dem ersten echten Lauf: Postfach sichern und Treffer im Dry-Run prüfen.
   bereinigte Ergebnisse ansehen. Vollständig abschaltbar.
 - CLI über privaten Unix-Socket sowie unabhängiger Einmalmodus.
 - Verpflichtendes TLS mit Zertifikatsprüfung, kein Download von Mailinhalten.
+- Optionale healthchecks.io-Erfolgsmeldung ausschließlich nach vollständig
+  erfolgreichen Jobs; gesperrte/übersprungene Jobs senden keinen Ping.
 
 ## Architektur und Schlüssel
 
@@ -230,6 +232,93 @@ unbeaufsichtigter Cron-Container könnte den Schlüssel nicht aus dem Speicher
 eines anderen Prozesses übernehmen. Für den vereinbarten Ablauf deshalb
 `serve` plus internen Cron oder `run` verwenden.
 
+## Monitoring mit healthchecks.io
+
+Die optionale Integration meldet **nur vollständig erfolgreiche Jobs**, nicht
+die Erreichbarkeit des Containers. Nach einem Neustart bleibt der Dienst
+gesperrt und sendet keine Pings, bis er entsperrt wurde und ein Job erfolgreich
+durchgelaufen ist. Der Docker-Healthcheck ist davon unabhängig: Ein gesperrter
+Dienst kann weiterhin als gesund gelten.
+
+Konfiguration:
+
+```json
+"healthchecks": {
+  "enabled": true,
+  "url_file": "/config/healthchecks-url",
+  "timeout": "5s",
+  "ping_on_dry_run": false
+}
+```
+
+1. Einen Check bei healthchecks.io oder einer selbst gehosteten Instanz anlegen.
+2. Die **HTTPS-Erfolgs-URL mit Check-UUID** als einzige Zeile in
+   `config/healthchecks-url` speichern, z. B.
+   `https://hc-ping.com/00000000-0000-0000-0000-000000000001`.
+   Keine `/start`-, `/fail`-, `/log`-, Exit-Code- oder Slug-URL verwenden.
+3. Datei für den Container-Benutzer `65532:65532` lesbar machen und Dateimodus
+   `0400` oder `0600` setzen. Die URL ist ein Geheimnis: Wer sie kennt, kann
+   Erfolgsmeldungen vortäuschen. Nicht in Git, Logs oder Shell-Argumente schreiben.
+4. Bei healthchecks.io denselben Cron-Zeitplan und dieselbe Zeitzone wie beim Job
+   einstellen. Für `0 3 * * *`, `Europe/Berlin` und `job_timeout: "10m"` z. B.
+   eine Grace Time von 15 Minuten vorsehen. Benachrichtigungskanäle dort aktivieren.
+5. Dienst neu starten, entsperren und einen erfolgreichen Job ausführen.
+   Prüfen, dass der Check aktiv überwacht wird und der Ping eingegangen ist.
+   Ein neu angelegter, noch nicht gestarteter Check kann bis zum ersten Ping
+   auf seine Aktivierung warten.
+
+**„Schnell“ hängt vom Intervall ab:** Bei einem täglichen Job fällt eine
+ausbleibende Entsperrung unter Umständen erst am nächsten Tag plus Grace Time
+auf. Für eine kurze Erkennungszeit muss auch der Job entsprechend häufig laufen.
+Die Anwendung sendet absichtlich keinen Start-, Sperr-, Fehler- oder
+Lebenszeichen-Ping, der einen fehlenden erfolgreichen Job kaschieren könnte.
+
+Verhalten:
+
+- Ein HTTPS-POST mit aggregierten Zählern erst nach erfolgreicher Verarbeitung **aller Konten und
+  Regeln inklusive Logout**. Auch ein erfolgreicher Lauf ohne Treffer zählt.
+- Kein Ping beim Starten/Entsperren, für `status`, bei Sperre, Überschneidung,
+  Timeout, Teilfehlern, überschrittenem Mengenlimit oder abgebrochenen Jobs.
+- Dry-Runs senden standardmäßig **keinen** Erfolgsping. Für einen bewusst
+  überwachten Testbetrieb `ping_on_dry_run: true` setzen.
+- Manuell gestartete Jobs und `once` können ebenfalls einen Erfolgsping senden;
+  für einen ausschließlich geplanten Check ggf. eine getrennte Konfiguration
+  ohne Monitoring bei manuellen Einmalläufen verwenden.
+- Nur aggregierte Treffer-/Aktionszahlen und ein Dry-Run-Kennzeichen im Request;
+  keine Konten-/Regelnamen, Ordner, Mailinhalte, Schlüssel oder Fehlermeldungen.
+  HTTP-Weiterleitungen werden nicht verfolgt; es gibt keine automatischen Retries.
+- Scheitert die Erfolgsmeldung, wird der Lauf mit generischem Monitoring-Fehler
+  als fehlgeschlagen angezeigt. Postfachänderungen bleiben bestehen. Bei einem
+  Timeout kann der Server den Ping bereits empfangen haben, obwohl lokal keine
+  Bestätigung eingetroffen ist.
+- Die URL-Datei wird pro Job neu gelesen. URL-Rotation benötigt keinen Neustart;
+  Konfigurationsänderungen dagegen schon.
+
+Die Tests dieser Integration laufen über den vorhandenen GitHub-Actions-
+Testschritt mit künstlichen Endpunkten. Es wird kein echter healthchecks.io-Check
+aus dem CI angepingt.
+
+### Job-Zähler im Ping
+
+Der JSON-Body ist in den Ping-Details/Logs bei healthchecks.io einsehbar, z. B.:
+
+```json
+{"matched":42,"archived":30,"deleted":12,"dry_run":false}
+```
+
+- `matched`: Summe aller Treffer über Konten und Regeln.
+- `archived` / `deleted`: Summe der UIDs in erfolgreich bestätigten Archivierungs-
+  bzw. Löschbefehlen.
+- `dry_run`: Kennzeichnet einen optional aktivierten Dry-Run-Ping. Dabei bleiben
+  `archived` und `deleted` bei `0`, `matched` zeigt die gefundenen Treffer.
+
+Die Zahlen sind **keine Anzahl eindeutiger Nachrichten**: Dieselbe Mail kann
+in mehreren Regeln vorkommen, z. B. erst archiviert und dann gelöscht werden.
+Andere Mailclients können parallel Nachrichten verändern; die Zähler sind
+keine unabhängige Nachkontrolle der tatsächlich veränderten Nachrichten.
+healthchecks.io stellt damit die Ping-Nutzlast bereit; automatische
+Zeitreihengrafiken oder ein eigenes Statistik-Dashboard sind nicht implementiert.
+
 ## Konfiguration und Regelsemantik
 
 [`examples/config.json`](examples/config.json) enthält ein vollständiges Beispiel.
@@ -244,6 +333,10 @@ Unbekannte Felder werden abgewiesen, damit Tippfehler nicht unbemerkt bleiben.
 | `max_messages_per_rule` | Positive Grenze, standardmäßig 1000; bei Überschreitung keine Änderung durch diese Regel |
 | `job_timeout` / `command_timeout` | Positive Go-Zeitspannen, standardmäßig `10m` / `30s` |
 | `socket` | Privater lokaler Kontroll-Socket |
+| `healthchecks.enabled` | Optionales Erfolgsmonitoring, standardmäßig `false` |
+| `healthchecks.url_file` | Private Datei mit HTTPS-Erfolgs-URL und Check-UUID |
+| `healthchecks.timeout` | Positiver HTTP-Timeout bis 1 Minute, standardmäßig `5s`; zusätzlich gilt der Job-Timeout |
+| `healthchecks.ping_on_dry_run` | Dry-Run ebenfalls melden, standardmäßig `false` |
 | `accounts[].name` | Eindeutiger Alias; derselbe Name wird in den verschlüsselten Zugangsdaten verwendet |
 | `accounts[].server` | `host:port`, z. B. `imap.example.com:993` |
 | `accounts[].tls_mode` | `tls` (implizit, meistens 993) oder verpflichtendes `starttls` (meistens 143) |
