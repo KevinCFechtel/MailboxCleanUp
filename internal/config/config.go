@@ -15,16 +15,24 @@ import (
 )
 
 type Config struct {
-	CredentialsFile    string    `json:"credentials_file"`
-	Schedule           string    `json:"schedule"`
-	Timezone           string    `json:"timezone"`
-	DryRun             bool      `json:"dry_run"`
-	MaxMessagesPerRule int       `json:"max_messages_per_rule"`
-	JobTimeout         string    `json:"job_timeout"`
-	CommandTimeout     string    `json:"command_timeout"`
-	Socket             string    `json:"socket"`
-	Web                Web       `json:"web"`
-	Accounts           []Account `json:"accounts"`
+	CredentialsFile    string       `json:"credentials_file"`
+	Schedule           string       `json:"schedule"`
+	Timezone           string       `json:"timezone"`
+	DryRun             bool         `json:"dry_run"`
+	MaxMessagesPerRule int          `json:"max_messages_per_rule"`
+	JobTimeout         string       `json:"job_timeout"`
+	CommandTimeout     string       `json:"command_timeout"`
+	Socket             string       `json:"socket"`
+	Healthchecks       Healthchecks `json:"healthchecks"`
+	Web                Web          `json:"web"`
+	Accounts           []Account    `json:"accounts"`
+}
+
+type Healthchecks struct {
+	Enabled      bool   `json:"enabled"`
+	URLFile      string `json:"url_file"`
+	Timeout      string `json:"timeout"`
+	PingOnDryRun bool   `json:"ping_on_dry_run"`
 }
 
 type Web struct {
@@ -56,8 +64,9 @@ func Load(path string) (Config, error) {
 	c := Config{
 		DryRun: true, MaxMessagesPerRule: 1000, Timezone: "UTC",
 		Schedule: "0 3 * * *", JobTimeout: "10m", CommandTimeout: "30s",
-		Socket: "/run/mailboxcleanup/control.sock",
-		Web:    Web{Listen: "127.0.0.1:8080", SecureCookies: true},
+		Socket:       "/run/mailboxcleanup/control.sock",
+		Web:          Web{Listen: "127.0.0.1:8080", SecureCookies: true},
+		Healthchecks: Healthchecks{Timeout: "5s"},
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -81,6 +90,15 @@ func (c Config) Validate() error {
 	}
 	if c.MaxMessagesPerRule < 1 {
 		return errors.New("max_messages_per_rule must be positive")
+	}
+	if c.Healthchecks.Enabled {
+		if c.Healthchecks.URLFile == "" {
+			return errors.New("healthchecks.url_file is required when healthchecks is enabled")
+		}
+		timeout, err := time.ParseDuration(c.Healthchecks.Timeout)
+		if err != nil || timeout <= 0 || timeout > time.Minute {
+			return errors.New("healthchecks.timeout must be positive and at most 1m")
+		}
 	}
 	for _, value := range []string{c.JobTimeout, c.CommandTimeout} {
 		duration, err := time.ParseDuration(value)

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +29,7 @@ type fakeSession struct {
 	calls      int
 	failAt     int
 	loggedOut  bool
+	logoutErr  error
 }
 
 func (f *fakeSession) Supports(string) (bool, error) { return f.capable, nil }
@@ -40,7 +43,7 @@ func (f *fakeSession) SearchBefore(before time.Time) ([]uint32, error) {
 }
 func (f *fakeSession) Archive(_ []uint32, _ string) error { return f.op("archive") }
 func (f *fakeSession) Delete(_ []uint32) error            { return f.op("delete") }
-func (f *fakeSession) Logout() error                      { f.loggedOut = true; return nil }
+func (f *fakeSession) Logout() error                      { f.loggedOut = true; return f.logoutErr }
 func (f *fakeSession) op(name string) error {
 	f.calls++
 	f.operations = append(f.operations, name)
@@ -54,7 +57,10 @@ func fixture(t *testing.T) (*Engine, string) {
 	t.Helper()
 	id, _ := age.GenerateX25519Identity()
 	var b bytes.Buffer
-	_ = secrets.Encrypt(&b, secrets.Credentials{Accounts: map[string]secrets.Credential{"personal": {Username: "user", Password: "password"}}}, id.Recipient())
+	_ = secrets.Encrypt(&b, secrets.Credentials{Accounts: map[string]secrets.Credential{
+		"personal": {Username: "user", Password: "password"},
+		"work":     {Username: "work-user", Password: "work-password"},
+	}}, id.Recipient())
 	path := filepath.Join(t.TempDir(), "credentials.age")
 	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
 		t.Fatal(err)
@@ -176,5 +182,117 @@ func TestServiceSerializesAndLockCancelsRun(t *testing.T) {
 	}
 	if !errors.Is(s.Trigger(context.Background()), secrets.ErrLocked) {
 		t.Fatal("locked run accepted")
+	}
+}
+
+func TestHealthchecksOnlyAfterCompleteSuccess(t *testing.T) {
+	for _, scenario := range []string{
+		"success", "no-matches", "disabled", "locked", "connection-failed",
+		"operation-failed", "limit-exceeded", "logout-failed", "cancelled",
+		"dry-run", "dry-run-opt-in", "notification-failed",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			e, _ := fixture(t)
+			e.Config.DryRun = false
+			e.Config.Healthchecks.Enabled = true
+			f := &fakeSession{uids: []uint32{1}, capable: true}
+			e.Connect = func(context.Context, config.Account, secrets.Credential) (Session, error) { return f, nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch scenario {
+			case "no-matches":
+				f.uids = nil
+			case "disabled":
+				e.Config.Healthchecks.Enabled = false
+			case "locked":
+				e.Store.Lock()
+			case "connection-failed":
+				e.Connect = func(context.Context, config.Account, secrets.Credential) (Session, error) {
+					return nil, errors.New("connection failed")
+				}
+			case "operation-failed":
+				f.failAt = 2 // A successful earlier rule must not trigger a ping.
+			case "limit-exceeded":
+				e.Config.MaxMessagesPerRule = 1
+				f.uids = []uint32{1, 2}
+			case "logout-failed":
+				f.logoutErr = errors.New("logout failed")
+			case "cancelled":
+				cancel()
+			case "dry-run":
+				e.Config.DryRun = true
+			case "dry-run-opt-in":
+				e.Config.DryRun = true
+				e.Config.Healthchecks.PingOnDryRun = true
+			}
+			calls := 0
+			e.NotifySuccess = func(context.Context, Counts) error {
+				calls++
+				if !f.loggedOut {
+					t.Error("ping happened before successful logout")
+				}
+				if scenario == "notification-failed" {
+					return errors.New("untrusted error containing a secret URL")
+				}
+				return nil
+			}
+			report := e.Run(ctx)
+			wantPing := scenario == "success" || scenario == "no-matches" || scenario == "dry-run-opt-in" || scenario == "notification-failed"
+			if (calls == 1) != wantPing || calls > 1 {
+				t.Fatalf("unexpected number of success pings: %d", calls)
+			}
+			wantSuccess := scenario == "success" || scenario == "no-matches" || scenario == "disabled" || scenario == "dry-run" || scenario == "dry-run-opt-in"
+			if report.Success != wantSuccess || strings.Contains(report.Error, "secret URL") {
+				t.Fatalf("unexpected report: %+v", report)
+			}
+		})
+	}
+}
+
+func TestLockedServiceDoesNotPing(t *testing.T) {
+	e, _ := fixture(t)
+	e.Store.Lock()
+	e.Config.Healthchecks.Enabled = true
+	e.NotifySuccess = func(context.Context, Counts) error {
+		t.Error("locked/skipped job sent a ping")
+		return nil
+	}
+	s := NewService(e, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if !errors.Is(s.Trigger(context.Background()), secrets.ErrLocked) {
+		t.Fatal("locked scheduled job accepted")
+	}
+	s.Wait()
+}
+
+func TestSuccessCountsAggregateAllRulesAndAccounts(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprint(dryRun), func(t *testing.T) {
+			e, _ := fixture(t)
+			e.Config.DryRun = dryRun
+			e.Config.Healthchecks.Enabled = true
+			e.Config.Healthchecks.PingOnDryRun = true
+			// Same rules on a second account, with no dependency on real IMAP.
+			work := e.Config.Accounts[0]
+			work.Name = "work"
+			e.Config.Accounts = append(e.Config.Accounts, work)
+			e.Connect = func(context.Context, config.Account, secrets.Credential) (Session, error) {
+				return &fakeSession{uids: []uint32{1, 2, 3}, capable: true}, nil
+			}
+			var received Counts
+			calls := 0
+			e.NotifySuccess = func(_ context.Context, counts Counts) error {
+				calls++
+				received = counts
+				return nil
+			}
+			report := e.Run(context.Background())
+			want := Counts{Matched: 12, Archived: 6, Deleted: 6, DryRun: dryRun}
+			if dryRun {
+				want.Archived, want.Deleted = 0, 0
+			}
+			if !report.Success || calls != 1 || received != want {
+				t.Fatalf("unexpected aggregate counts: got %+v, want %+v", received, want)
+			}
+		})
 	}
 }

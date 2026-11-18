@@ -21,6 +21,7 @@ import (
 	"filippo.io/age"
 	"github.com/KevinCFechtel/MailboxCleanUp/internal/config"
 	"github.com/KevinCFechtel/MailboxCleanUp/internal/control"
+	"github.com/KevinCFechtel/MailboxCleanUp/internal/healthchecks"
 	"github.com/KevinCFechtel/MailboxCleanUp/internal/job"
 	"github.com/KevinCFechtel/MailboxCleanUp/internal/mail"
 	"github.com/KevinCFechtel/MailboxCleanUp/internal/secrets"
@@ -116,7 +117,12 @@ func newEngine(c config.Config) *job.Engine {
 		names = append(names, a.Name)
 	}
 	timeout, _ := time.ParseDuration(c.CommandTimeout)
-	return &job.Engine{Config: c, Store: secrets.New(c.CredentialsFile, names), Connect: mail.Connector(timeout)}
+	engine := &job.Engine{Config: c, Store: secrets.New(c.CredentialsFile, names), Connect: mail.Connector(timeout)}
+	if c.Healthchecks.Enabled {
+		pingTimeout, _ := time.ParseDuration(c.Healthchecks.Timeout)
+		engine.NotifySuccess = healthchecks.New(c.Healthchecks.URLFile, pingTimeout).Ping
+	}
+	return engine
 }
 
 func server(handler http.Handler) *http.Server {

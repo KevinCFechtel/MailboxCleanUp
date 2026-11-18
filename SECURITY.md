@@ -64,6 +64,17 @@ zugreifen. Dies wird nicht durch Verschlüsselung im Ruhezustand verhindert.
 
 ## Container und Betrieb
 
+- Optionales healthchecks.io-Monitoring sendet nur nach erfolgreichen Jobs einen
+  HTTPS-POST mit aggregierten Treffer-/Archivierungs-/Löschzahlen und einem
+  Dry-Run-Kennzeichen. Keine Rohfehler, Mailinhalte, Ordner oder Konten-Aliase
+  werden übertragen. Die Gegenstelle erfährt zusätzlich IP-Adresse und Zeitpunkt
+  eines Erfolgs; die Zähler lassen Rückschlüsse auf das Nachrichtenvolumen zu.
+- Die Ping-URL wird als lokales Geheimnis behandelt und nicht protokolliert.
+  HTTPS mit Zertifikatsprüfung ist verpflichtend; Redirects und Start-/Fehler-
+  Endpunkte werden abgewiesen. Die Datei darf keine Gruppen-/Fremdrechte haben.
+- Fehlende Pings erkennen Sperre/Stillstand nur nach dem bei healthchecks.io
+  eingestellten Zeitplan und der Grace Time, nicht unmittelbar beim Neustart.
+
 - Kein privater Schlüssel und keine echten Zugangsdaten im Image/Build-Kontext.
 - Nicht-Root, read-only Root-Dateisystem, alle Capabilities entfernt,
   no-new-privileges, begrenzte Ressourcen.

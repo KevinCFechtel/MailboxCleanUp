@@ -20,6 +20,15 @@ type Session interface {
 
 type Connect func(context.Context, config.Account, secrets.Credential) (Session, error)
 
+// Counts contains only aggregate rule hits and UIDs in confirmed commands.
+// It is not a count of distinct messages across rules.
+type Counts struct {
+	Matched  int  `json:"matched"`
+	Archived int  `json:"archived"`
+	Deleted  int  `json:"deleted"`
+	DryRun   bool `json:"dry_run"`
+}
+
 type RuleResult struct {
 	Account string `json:"account"`
 	Rule    string `json:"rule"`
@@ -38,10 +47,11 @@ type Report struct {
 }
 
 type Engine struct {
-	Config  config.Config
-	Store   *secrets.Store
-	Connect Connect
-	Now     func() time.Time
+	Config        config.Config
+	Store         *secrets.Store
+	Connect       Connect
+	Now           func() time.Time
+	NotifySuccess func(context.Context, Counts) error
 }
 
 func (e *Engine) Run(ctx context.Context) Report {
@@ -50,6 +60,7 @@ func (e *Engine) Run(ctx context.Context) Report {
 		now = e.Now
 	}
 	report := Report{Started: now(), DryRun: e.Config.DryRun, Success: true}
+	counts := Counts{DryRun: e.Config.DryRun}
 	deferFunc := func() Report {
 		report.Finished = now()
 		return report
@@ -78,6 +89,12 @@ func (e *Engine) Run(ctx context.Context) Report {
 		for _, rule := range account.Rules {
 			result := apply(ctx, session, e.Config, account.Name, rule, report.Started.In(location))
 			report.Results = append(report.Results, result)
+			counts.Matched += result.Matched
+			if rule.Action == "archive" {
+				counts.Archived += result.Changed
+			} else if rule.Action == "delete" {
+				counts.Deleted += result.Changed
+			}
 			if result.Error != "" {
 				report.Success = false
 				// Stop this account: dependent rules must not run after a failure.
@@ -87,6 +104,16 @@ func (e *Engine) Run(ctx context.Context) Report {
 		if err := session.Logout(); err != nil {
 			report.Success = false
 			report.Results = append(report.Results, RuleResult{Account: account.Name, Error: "logout failed"})
+		}
+	}
+	if ctx.Err() != nil {
+		report.Success = false
+		report.Error = "job cancelled or timed out"
+	}
+	if report.Success && e.Config.Healthchecks.Enabled && (!e.Config.DryRun || e.Config.Healthchecks.PingOnDryRun) {
+		if e.NotifySuccess == nil || e.NotifySuccess(ctx, counts) != nil {
+			report.Success = false
+			report.Error = "mailbox processing succeeded, but healthchecks success ping failed"
 		}
 	}
 	return deferFunc()
