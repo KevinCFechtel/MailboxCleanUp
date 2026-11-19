@@ -77,6 +77,73 @@ func logIn(t *testing.T, handler http.Handler) (*http.Cookie, string) {
 	return cookies[0], match[1]
 }
 
+func TestPagesRenderInEnglish(t *testing.T) {
+	ui, _ := uiFixture(t)
+	cases := []struct {
+		name string
+		view view
+		want []string
+	}{
+		{
+			name: "sign-in",
+			want: []string{"Sign in", "Access token", "The web access token is separate from the decryption key."},
+		},
+		{
+			name: "locked",
+			view: view{Authenticated: true, Status: job.Status{DryRun: true}},
+			want: []string{"Service status", "Locked", "Dry-run enabled: no changes", "External / manual triggers only",
+				"Unlock mailbox access", "Private age key", "Run job now", "Lock service", "Sign out"},
+		},
+		{
+			name: "running-live",
+			view: view{Authenticated: true, Status: job.Status{
+				Unlocked: true, Running: true, Schedule: "0 3 * * *", Timezone: "Europe/Berlin",
+			}},
+			want: []string{"Unlocked", "Job running", "Live mode enabled: rules modify the mailbox", "Schedule: 0 3 * * *",
+				"Signing out does not lock the service."},
+		},
+		{
+			name: "successful-dry-run",
+			view: view{Authenticated: true, Status: job.Status{Last: &job.Report{Success: true, DryRun: true}}},
+			want: []string{"Last job", "Successful", "Dry-run: no changes", "End:", "Account / Rule", "Matches", "Confirmed UIDs", "Error"},
+		},
+		{
+			name: "failed-live",
+			view: view{Authenticated: true, Status: job.Status{Last: &job.Report{Error: "message search failed"}}},
+			want: []string{"Last job", "Failed", "Live mode", "message search failed"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ui.render(w, tc.view)
+			body := w.Body.String()
+			for _, text := range append(tc.want, `<html lang="en">`, "No message content. No external scripts. No analytics services.") {
+				if !strings.Contains(body, text) {
+					t.Errorf("missing English page text %q", text)
+				}
+			}
+		})
+	}
+}
+
+func TestSignInAndUnlockFailuresAreEnglish(t *testing.T) {
+	ui, _ := uiFixture(t)
+	handler := ui.Handler()
+	w := request(handler, "POST", "/login", url.Values{"token": {"wrong"}}, nil, "")
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "Sign-in failed.") {
+		t.Fatal("missing English sign-in failure message")
+	}
+	cookie, csrf := logIn(t, handler)
+	w = request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {"invalid"}}, cookie, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Unlock failed: check the key, file, or running job.") {
+		t.Fatal("missing English unlock failure message")
+	}
+	if ui.service.Status().Unlocked {
+		t.Fatal("invalid key unlocked service")
+	}
+}
+
 func TestUnlockLockAndLogout(t *testing.T) {
 	ui, key := uiFixture(t)
 	handler := ui.Handler()
@@ -84,6 +151,9 @@ func TestUnlockLockAndLogout(t *testing.T) {
 	w := request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {key}}, cookie, "")
 	if w.Code != http.StatusOK || !ui.service.Status().Unlocked {
 		t.Fatalf("unlock failed: %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Unlocked. Scheduled jobs can now run.") {
+		t.Fatal("missing English unlock message")
 	}
 	if strings.Contains(w.Body.String(), key) || strings.Contains(w.Body.String(), "mail-password") {
 		t.Fatal("secret reflected into page")
@@ -103,6 +173,9 @@ func TestUnlockLockAndLogout(t *testing.T) {
 	w = request(handler, "POST", "/lock", url.Values{"csrf": {csrf}}, cookie, "")
 	if w.Code != http.StatusOK || ui.service.Status().Unlocked {
 		t.Fatal("web lock failed")
+	}
+	if !strings.Contains(w.Body.String(), "Locked. Any running job will be cancelled.") {
+		t.Fatal("missing English lock message")
 	}
 }
 

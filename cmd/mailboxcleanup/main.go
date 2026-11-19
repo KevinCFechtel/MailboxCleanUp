@@ -277,7 +277,7 @@ func readKey(stdin bool) ([]byte, error) {
 		}
 		return data, nil
 	}
-	return hidden("Privater age-Schlüssel: ")
+	return hidden("Private age key: ")
 }
 
 func hidden(prompt string) ([]byte, error) {
@@ -329,11 +329,11 @@ func createCredentials(args []string) error {
 		if _, ok := c.Accounts[name]; ok {
 			return errors.New("duplicate account name")
 		}
-		username, err := hidden(name + " Benutzername (verdeckt): ")
+		username, err := hidden(name + " username (hidden): ")
 		if err != nil {
 			return err
 		}
-		password, err := hidden(name + " IMAP-/App-Passwort (verdeckt): ")
+		password, err := hidden(name + " IMAP/app password (hidden): ")
 		if err != nil {
 			clear(username)
 			return err
@@ -350,9 +350,9 @@ func createCredentials(args []string) error {
 	if err := writePrivate(*output, func(w io.Writer) error { return secrets.Encrypt(w, c, public) }); err != nil {
 		return err
 	}
-	fmt.Println("Verschlüsselte Zugangsdaten erstellt. Öffentlicher Empfänger:", public.String())
+	fmt.Println("Encrypted credentials created. Public recipient:", public.String())
 	if id != nil {
-		fmt.Println("Jetzt im Passwortmanager speichern; ohne diesen privaten Schlüssel ist keine Wiederherstellung möglich:")
+		fmt.Println("Save this in your password manager now; recovery is impossible without this private key:")
 		fmt.Println(id.String())
 	}
 	return nil
@@ -376,7 +376,7 @@ func createWebToken(args []string) error {
 	}); err != nil {
 		return err
 	}
-	fmt.Println("Web-Zugangstoken erstellt. Im Passwortmanager speichern:")
+	fmt.Println("Web access token created. Save it in your password manager:")
 	fmt.Println(token)
 	return nil
 }
