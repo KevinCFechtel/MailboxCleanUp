@@ -1,65 +1,65 @@
 # MailboxCleanUp
 
-Ein containerisierter Go-Dienst für regelmäßig ausgeführte IMAP-Archivierungs- und
-Löschregeln. Führt [ImapDelete](https://github.com/KevinCFechtel/ImapDelete) und
-[ImapArchive](https://github.com/KevinCFechtel/ImapArchive) zusammen.
+A containerized Go service for scheduled IMAP archiving and deletion rules.
+Combines [ImapDelete](https://github.com/KevinCFechtel/ImapDelete) and
+[ImapArchive](https://github.com/KevinCFechtel/ImapArchive).
 
-**Standardmäßig werden keine Nachrichten verändert.** Erst nach manuellem
-Entsperren **und** mit `dry_run: false` können Regeln Änderungen ausführen.
-Vor dem ersten echten Lauf: Postfach sichern und Treffer im Dry-Run prüfen.
+**No messages are modified by default.** Rules can make changes only after
+manual unlocking **and** with `dry_run: false`.
+Before the first live run, back up the mailbox and review matches in a dry-run.
 
-## Funktionen
+## Features
 
-- Mehrere IMAP-Konten mit explizit geordneten Regeln.
-- Archivieren in bestehende IMAP-Ordner und endgültiges Löschen nach Alter.
-- Fünffeld-Cron mit Zeitzone, begrenzter Laufzeit und ohne überlappende Jobs.
-- Lokal mit **age/X25519** verschlüsselte Zugangsdaten; kein Klartext-Passwort in
-  Konfiguration, Image oder Umgebungsvariablen.
-- Einmaliges Entsperren nach jedem **Prozess-/Container-Neustart**. Danach laufen
-  die Jobs ohne weitere Interaktion.
-- Optionale Weboberfläche: anmelden, entsperren, sperren, Job starten und
-  bereinigte Ergebnisse ansehen. Vollständig abschaltbar.
-- CLI über privaten Unix-Socket sowie unabhängiger Einmalmodus.
-- Verpflichtendes TLS mit Zertifikatsprüfung, kein Download von Mailinhalten.
-- Optionale healthchecks.io-Erfolgsmeldung ausschließlich nach vollständig
-  erfolgreichen Jobs; gesperrte/übersprungene Jobs senden keinen Ping.
+- Multiple IMAP accounts with explicitly ordered rules.
+- Archive to existing IMAP folders and permanently delete messages by age.
+- Five-field cron with a time zone, bounded runtime, and no overlapping jobs.
+- Credentials encrypted locally with **age/X25519**; no plaintext passwords in
+  configuration, images, or environment variables.
+- Unlock once after each **process/container restart**. Jobs then run without
+  further interaction.
+- Optional web interface: sign in, unlock, lock, start jobs, and view sanitized
+  results. Can be disabled completely.
+- CLI over a private Unix socket, plus an independent one-shot mode.
+- Mandatory TLS with certificate verification; no message content downloads.
+- Optional healthchecks.io success notification only after fully successful
+  jobs; locked/skipped jobs do not send a ping.
 
-## Architektur und Schlüssel
+## Architecture and keys
 
 ```text
-Bitwarden / KeePassXC / anderer Passwortmanager
-                    │ privater age-Schlüssel, einmal manuell
+Bitwarden / KeePassXC / another password manager
+                    │ private age key, supplied manually once
                     ▼
-           CLI oder geschützte Weboberfläche
+           CLI or protected web interface
                     │
                     ▼
-     Dienst hält Identität nur im Prozessspeicher
-                    │ pro Job entschlüsseln
+     Service holds identity only in process memory
+                    │ decrypt for each job
                     ▼
- lokale credentials.age ──► IMAP-Regeln über TLS
+ local credentials.age ──► IMAP rules over TLS
 ```
 
-Die Anwendung ist absichtlich **nicht an einen Passwortmanager gekoppelt**.
-Sie speichert weder dessen Master-Passwort noch einen Cloud-Zugriffstoken.
-Nur den privaten age-Schlüssel in deinem Passwortmanager aufbewahren; alternativ
-in einer lokalen KeePassXC-Datenbank. Ohne Schlüssel keine Wiederherstellung:
-getrenntes, verschlüsseltes Backup einplanen.
+The application is deliberately **not tied to a password manager**.
+It stores neither the password manager's master password nor a cloud access token.
+Store only the private age key in your password manager, or alternatively in a
+local KeePassXC database. Recovery is impossible without the key:
+plan for a separate encrypted backup.
 
-Der Web-Zugangstoken ist ein **separates** Geheimnis. Er schützt die Oberfläche,
-kann aber allein die IMAP-Zugangsdaten nicht entschlüsseln. Er liegt lokal in
-einer zugriffsgeschützten Datei. Ein eingeloggter Benutzer kann einen bereits
-entsperrten Dienst jedoch steuern.
+The web access token is a **separate** secret. It protects the interface but
+cannot decrypt IMAP credentials on its own. It is stored locally in an
+access-restricted file. However, a signed-in user can control an already
+unlocked service.
 
-## Schnellstart mit Docker Compose
+## Quick start with Docker Compose
 
-Voraussetzungen: Docker mit Compose, SSH-Zugriff auf den Host und ein
-Passwortmanager. Die Beispiele setzen eine Linux-NAS/einen Linux-Server voraus.
-Das Image wird ausschließlich durch GitHub Actions gebaut und geprüft.
-Zunächst muss ein Release-Tag wie `v1.0.0` erfolgreich veröffentlicht worden sein.
-Bei privatem GHCR-Paket vorher mit einem entsprechend berechtigten Konto
-anmelden. Eine lokale Go-Installation ist nicht erforderlich.
+Prerequisites: Docker with Compose, SSH access to the host, and a password manager.
+The examples assume a Linux NAS/server.
+The image is built and checked exclusively through GitHub Actions.
+A release tag such as `v1.0.0` must have been published successfully first.
+For a private GHCR package, sign in beforehand with an account that has the
+required permissions. A local Go installation is not required.
 
-### 1. Konfiguration vorbereiten
+### 1. Prepare the configuration
 
 ```bash
 mkdir -p config
@@ -67,11 +67,11 @@ cp examples/config.json config/config.json
 docker compose pull
 ```
 
-In `config/config.json` mindestens Server, Kontonamen, Quell-/Zielordner und
-Aufbewahrungsfristen anpassen. Zunächst **`dry_run: true` beibehalten**.
-Archivordner müssen bereits existieren.
+In `config/config.json`, configure at least the servers, account names,
+source/destination folders, and retention periods. **Keep `dry_run: true` initially**.
+Archive folders must already exist.
 
-### 2. Verschlüsselte Zugangsdaten erzeugen
+### 2. Generate encrypted credentials
 
 ```bash
 docker run --rm -it --network none \
@@ -82,21 +82,21 @@ docker run --rm -it --network none \
   --output /config/credentials.age
 ```
 
-Für mehrere Konten z. B. `--accounts personal,work`. Die Namen müssen mit der
-Konfiguration übereinstimmen. Benutzername und Passwort werden verdeckt
-abgefragt. Nach Möglichkeit ein separates, widerrufbares App-Passwort verwenden.
+For multiple accounts, use e.g. `--accounts personal,work`. Names must match the
+configuration. Username and password are prompted for with input hidden.
+Use a separate, revocable app password where possible.
 
-Der Befehl schreibt **nur verschlüsselte Zugangsdaten**. Er zeigt anschließend:
+The command writes **only encrypted credentials**. It then displays:
 
-- den öffentlichen Empfänger `age1…`: für spätere Passwortrotation aufbewahren;
-- den privaten Schlüssel `AGE-SECRET-KEY-…`: **jetzt im Passwortmanager sichern**.
+- the public recipient `age1…`: keep it for future password rotation;
+- the private key `AGE-SECRET-KEY-…`: **save it in your password manager now**.
 
-Den privaten Schlüssel nicht in Dateien neben der Konfiguration, in Compose,
-in Shell-Argumenten oder in Umgebungsvariablen hinterlegen. Terminal-Aufzeichnung
-und Zwischenablage berücksichtigen. Der Erzeugungsbefehl darf den Schlüssel
-einmal anzeigen; der laufende Dienst protokolliert ihn nie.
+Do not store the private key in files alongside the configuration, in Compose,
+in shell arguments, or in environment variables. Consider terminal recording
+and clipboard exposure. The generation command may display the key once;
+the running service never logs it.
 
-### 3. Web-Zugangstoken erzeugen
+### 3. Generate a web access token
 
 ```bash
 docker run --rm -it --network none \
@@ -105,12 +105,11 @@ docker run --rm -it --network none \
   ghcr.io/kevincfechtel/mailboxcleanup:latest web-token --output /config/web-token
 ```
 
-Diesen Token ebenfalls im Passwortmanager sichern. Er ist **nicht** der
-age-Schlüssel.
+Save this token in your password manager as well. It is **not** the age key.
 
-Das Image läuft als UID/GID `65532`. Auf einem Linux-Host müssen die eingebundenen
-Dateien für diesen Benutzer lesbar sein. Beispiel für das gerade angelegte,
-ausschließlich diesem Dienst gehörende Verzeichnis:
+The image runs as UID/GID `65532`. On a Linux host, mounted files must be
+readable by this user. Example for the directory just created, which belongs
+exclusively to this service:
 
 ```bash
 sudo chown 65532:65532 config config/config.json config/credentials.age config/web-token
@@ -119,88 +118,87 @@ sudo chmod 0440 config/config.json
 sudo chmod 0400 config/credentials.age config/web-token
 ```
 
-NAS-ACLs/Benutzer-Mapping gegebenenfalls passend einrichten. Den Web-Token nicht
-einfach weltweit lesbar machen: Der Dienst verweigert Token-Dateien mit
-Gruppen-/Fremdrechten standardmäßig. Für ACL-verwaltete NAS-Freigaben siehe den
-folgenden Abschnitt. Spätere Bearbeitung dieser Dateien benötigt entsprechende
-Host-Administratorrechte.
+Configure NAS ACLs/user mapping as needed. Do not simply make the web token
+world-readable: by default, the service rejects token files with group/other
+permissions. For ACL-managed NAS shares, see the following section.
+Subsequent edits to these files require the appropriate host administrator
+permissions.
 
-#### Synology/NAS: Webtoken-Rechte über ACLs verwalten
+#### Synology/NAS: Manage web token permissions through ACLs
 
-Wenn das NAS trotz eingeschränkter ACLs POSIX-Gruppen-/Fremdrechte meldet, kann
-die POSIX-Rechteprüfung gezielt abgeschaltet werden. Dazu im bestehenden
-`web`-Objekt von `config.json` ergänzen:
+If the NAS reports POSIX group/other permissions despite restrictive ACLs,
+the POSIX permission check can be disabled explicitly. Add this to the existing
+`web` object in `config.json`:
 
 ```json
 "allow_insecure_token_permissions": true
 ```
 
-Standard ist `false`. Bei `true` prüft der Dienst weiterhin, dass die Token-Datei
-existiert, eine lesbare reguläre Datei mit höchstens 4096 Bytes ist und einen
-Token mit mindestens 32 Zeichen enthält. Nur die Prüfung der POSIX-Gruppen-/
-Fremdrechte entfällt; beim Start wird eine Warnung ausgegeben. Die Anwendung
-wertet NAS-ACLs nicht selbst aus: Den Zugriff auf Datei und Freigabe über die
-NAS-Berechtigungen auf vertrauenswürdige Benutzer beschränken. Wer den Token
-lesen kann, kann sich an der Weboberfläche anmelden.
+The default is `false`. When `true`, the service still checks that the token file
+exists, is a readable regular file of at most 4096 bytes, and contains a token
+of at least 32 characters. Only the POSIX group/other permission check is skipped;
+a warning is logged at startup. The application does not evaluate NAS ACLs:
+use NAS permissions to restrict access to the file and share to trusted users.
+Anyone who can read the token can sign in to the web interface.
 
-Das ist unabhängig vom Mount-Modus: Zum **Erzeugen** der Token-Datei benötigt
-der Setup-Container `/config:rw`; im normalen Betrieb genügt `/config:ro`.
-Auch ein `:rw`-Mount ist zulässig, er schaltet die Dateirechteprüfung nicht um.
-Die Option erzeugt keine fehlende Token-Datei und ändert keine Dateirechte.
-Sie betrifft weder den Kontroll-Socket noch die healthchecks.io-URL-Datei
-(dafür gibt es separat `healthchecks.allow_insecure_url_permissions`).
-Nach einer Konfigurationsänderung den Dienst neu starten.
+This is independent of the mount mode: to **create** the token file, the setup
+container needs `/config:rw`; `/config:ro` is sufficient during normal operation.
+A `:rw` mount is also allowed and does not change the file permission check.
+The option neither creates a missing token file nor changes file permissions.
+It affects neither the control socket nor the healthchecks.io URL file
+(which has its own `healthchecks.allow_insecure_url_permissions` option).
+Restart the service after changing the configuration.
 
-### 4. Starten und Weboberfläche sicher erreichen
+### 4. Start the service and access the web interface securely
 
 ```bash
 docker compose up -d
 ```
 
-Compose veröffentlicht HTTP **nur auf `127.0.0.1` des Hosts**, nicht auf dessen
-LAN-/Internet-Adresse. Zugriff vom eigenen Rechner per SSH-Tunnel:
+Compose publishes HTTP **only on the host's `127.0.0.1`**, not on its LAN/Internet
+address. Connect from your own computer using an SSH tunnel:
 
 ```bash
-ssh -N -L 18080:127.0.0.1:8080 benutzer@nas
+ssh -N -L 18080:127.0.0.1:8080 user@nas
 ```
 
-Im Browser `http://localhost:18080` öffnen:
+Open `http://localhost:18080` in your browser:
 
-1. Mit dem **Web-Zugangstoken** anmelden.
-2. Den **privaten age-Schlüssel** im Entsperrformular eingeben.
-3. „Job jetzt starten“ verwenden und Dry-Run-Ergebnisse prüfen.
+1. Sign in with the **web access token**.
+2. Enter the **private age key** in the unlock form.
+3. Select "Run job now" and review the dry-run results.
 
-Das HTTP-Beispiel ist ausschließlich für diesen Loopback-/SSH-Ablauf gedacht.
-Der Browser-Host und SSH-Endpunkt gehören zur Vertrauensgrenze. Eine Anmeldung
-gilt 15 Minuten; **Abmelden sperrt den Dienst nicht** und beendet daher keine
-Cron-Jobs.
+The HTTP example is intended only for this loopback/SSH setup.
+The browser host and SSH endpoint are inside the trust boundary. A sign-in
+session lasts 15 minutes; **signing out does not lock the service** and therefore
+does not stop cron jobs.
 
-Nach Prüfung für echte Änderungen `dry_run` auf `false` setzen und den Container
-neu starten. Danach erneut entsperren. Keine Änderung der Konfiguration wird
-ohne Neustart übernommen.
+After verification, set `dry_run` to `false` for actual changes and restart the
+container. Unlock it again afterward. Configuration changes do not take effect
+without a restart.
 
-### HTTPS, VPN und Reverse Proxy
+### HTTPS, VPN, and reverse proxies
 
-Für direkten Browserzugriff über das Netzwerk **HTTPS verwenden**, vorzugsweise
-zusätzlich über VPN; die Oberfläche nicht öffentlich ins Internet stellen.
+For direct browser access over the network, **use HTTPS**, preferably with a
+VPN as well; do not expose the interface to the public Internet.
 
-- Direkte TLS-Terminierung: `web.tls_cert_file` und `web.tls_key_file` angeben,
-  `allow_insecure_http: false` und `secure_cookies: true` setzen.
-- Reverse Proxy: TLS am vertrauenswürdigen Proxy, `secure_cookies: true`,
-  HTTP intern ausdrücklich über `allow_insecure_http: true` erlauben. Den
-  Backend-Port weder öffentlich noch für nicht vertrauenswürdige Container
-  erreichbar machen. Originalen `Host` erhalten, damit Origin-Prüfung funktioniert.
-- Bei HTTPS das Token-/Schlüssel-Formular **nur über HTTPS** aufrufen.
-- Keine Proxy-/WAF-Konfiguration verwenden, die Request-Bodies protokolliert.
-- Ein NAS-HTTPS-Proxy auf demselben Host kann den Loopback-Port nutzen. Ein Proxy
-  in einem anderen Container erreicht ihn nicht über sein eigenes `127.0.0.1`;
-  dafür ein dediziertes, isoliertes Docker-Netz konfigurieren.
+- Direct TLS termination: specify `web.tls_cert_file` and `web.tls_key_file`,
+  and set `allow_insecure_http: false` and `secure_cookies: true`.
+- Reverse proxy: terminate TLS at a trusted proxy, set `secure_cookies: true`,
+  and explicitly allow internal HTTP with `allow_insecure_http: true`. Do not
+  expose the backend port publicly or to untrusted containers. Preserve the
+  original `Host` so origin checks work.
+- When using HTTPS, access the token/key form **only over HTTPS**.
+- Do not use proxy/WAF configurations that log request bodies.
+- A NAS HTTPS proxy on the same host can use the loopback port. A proxy in a
+  different container cannot reach it through its own `127.0.0.1`;
+  configure a dedicated, isolated Docker network for that setup.
 
-Die Anwendung vertraut nicht automatisch `X-Forwarded-*`-Headern. Das Cookie-
-Verhalten wird explizit konfiguriert. HTTP ohne sichere Cookies ist nur im
-geschützten SSH-/Loopback-Szenario sinnvoll.
+The application does not automatically trust `X-Forwarded-*` headers. Cookie
+behavior is configured explicitly. HTTP without secure cookies is appropriate
+only in the protected SSH/loopback setup.
 
-### Weboberfläche vollständig deaktivieren
+### Disable the web interface completely
 
 ```json
 "web": {
@@ -208,14 +206,14 @@ geschützten SSH-/Loopback-Szenario sinnvoll.
 }
 ```
 
-Dann wird **kein TCP-Webserver gestartet**, kein Web-Token benötigt und es werden
-keine TLS-Dateien gelesen. Optional auch die `ports`-Sektion in Compose entfernen.
-Eine vollständige Beispielkonfiguration steht in
+In this case, **no TCP web server starts**, no web token is required, and no TLS
+files are read. Optionally remove the `ports` section from Compose as well.
+A complete example configuration is available in
 [`examples/config.cli-only.json`](examples/config.cli-only.json).
 
 ## CLI
 
-Das minimale Image enthält keine Shell; den Befehl direkt ausführen:
+The minimal image has no shell; run the command directly:
 
 ```bash
 docker exec -it mailboxcleanup mailboxcleanup unlock
@@ -224,50 +222,47 @@ docker exec mailboxcleanup mailboxcleanup run
 docker exec mailboxcleanup mailboxcleanup lock
 ```
 
-`unlock` liest den Schlüssel verdeckt vom Terminal. `--key-stdin` ermöglicht
-optional eine direkte Pipe aus einem geeigneten lokalen Passwortmanager-
-Werkzeug, ohne Schlüssel in Argumenten oder Umgebungsvariablen. Dabei niemals
-Shell-Tracing (`set -x`) oder `echo SCHLÜSSEL` verwenden.
+`unlock` reads the key from the terminal with input hidden. `--key-stdin`
+optionally allows a direct pipe from a suitable local password manager tool,
+without putting keys in arguments or environment variables. Never use
+shell tracing (`set -x`) or `echo KEY` for this.
 
-`run` startet asynchron; `status` liefert anschließend Ergebnis und Status.
-`lock` entfernt die Identität und bricht einen aktiven Job ab. Bereits bestätigte
-Änderungen können nicht zurückgenommen werden. Das Beenden laufender Operationen
-erfolgt über Abbruch der IMAP-Verbindung; es gibt keine Transaktion/Rollback.
+`run` starts asynchronously; `status` then returns the result and current status.
+`lock` removes the identity and cancels an active job. Changes already confirmed
+cannot be undone. Running operations are stopped by closing the IMAP connection;
+there is no transaction or rollback.
 
-Alle Kontrollbefehle unterstützen `--socket PFAD`. Der Standard ist
-`/run/mailboxcleanup/control.sock`, Dateimodus `0600`. Nur Prozesse mit Zugriff
-auf diesen Socket dürfen den Dienst steuern. Docker-/Host-Administratoren sind
-grundsätzlich vertrauenswürdig.
+All control commands support `--socket PATH`. The default is
+`/run/mailboxcleanup/control.sock`, with file mode `0600`. Only processes with
+access to this socket may control the service. Docker/host administrators are
+considered trusted.
 
-### Externer Cron und einmalige Ausführung
+### External cron and one-shot execution
 
-Ein externer Host-Cron kann `docker exec mailboxcleanup mailboxcleanup run`
-aufrufen. Der dauerhafte, entsperrte Dienst bleibt dabei der Schlüsselhalter;
-Cron benötigt keinen Schlüssel. Mit `"schedule": ""` den integrierten
-Zeitplan deaktivieren oder ausschließlich den integrierten Cron verwenden.
-Gleichzeitige Aufrufe werden abgewiesen, nicht aufgestaut.
+An external host cron can call `docker exec mailboxcleanup mailboxcleanup run`.
+The persistent, unlocked service continues to hold the key; cron does not need
+a key. Disable the built-in schedule with `"schedule": ""`, or use only the
+built-in cron. Concurrent requests are rejected, not queued.
 
-Ein **unabhängiger** einmaliger Lauf ist ebenfalls möglich:
+An **independent** one-shot run is also possible:
 
 ```bash
 docker compose run --rm --no-deps mailboxcleanup \
   once --config /config/config.json
 ```
 
-Dieser Prozess benötigt seine eigene Entsperrung. Ein vollständig unabhängiger,
-unbeaufsichtigter Cron-Container könnte den Schlüssel nicht aus dem Speicher
-eines anderen Prozesses übernehmen. Für den vereinbarten Ablauf deshalb
-`serve` plus internen Cron oder `run` verwenden.
+This process needs to be unlocked separately. A fully independent, unattended
+cron container cannot obtain the key from another process's memory.
+For the intended workflow, use `serve` with the built-in cron or `run`.
 
-## Monitoring mit healthchecks.io
+## Monitoring with healthchecks.io
 
-Die optionale Integration meldet **nur vollständig erfolgreiche Jobs**, nicht
-die Erreichbarkeit des Containers. Nach einem Neustart bleibt der Dienst
-gesperrt und sendet keine Pings, bis er entsperrt wurde und ein Job erfolgreich
-durchgelaufen ist. Der Docker-Healthcheck ist davon unabhängig: Ein gesperrter
-Dienst kann weiterhin als gesund gelten.
+The optional integration reports **only fully successful jobs**, not container
+availability. After a restart, the service remains locked and sends no pings
+until it has been unlocked and a job has completed successfully.
+The Docker healthcheck is independent: a locked service can still be healthy.
 
-Konfiguration:
+Configuration:
 
 ```json
 "healthchecks": {
@@ -279,155 +274,154 @@ Konfiguration:
 }
 ```
 
-1. Einen Check bei healthchecks.io oder einer selbst gehosteten Instanz anlegen.
-2. Die **HTTPS-Erfolgs-URL mit Check-UUID** als einzige Zeile in
-   `config/healthchecks-url` speichern, z. B.
+1. Create a check on healthchecks.io or a self-hosted instance.
+2. Save the **HTTPS success URL with the check UUID** as the only line in
+   `config/healthchecks-url`, e.g.
    `https://hc-ping.com/00000000-0000-0000-0000-000000000001`.
-   Keine `/start`-, `/fail`-, `/log`-, Exit-Code- oder Slug-URL verwenden.
-3. Datei für den Container-Benutzer `65532:65532` lesbar machen und Dateimodus
-   `0400` oder `0600` setzen oder bei NAS-ACLs die unten beschriebene Option verwenden.
-   Die URL ist ein Geheimnis: Wer sie kennt, kann
-   Erfolgsmeldungen vortäuschen. Nicht in Git, Logs oder Shell-Argumente schreiben.
-4. Bei healthchecks.io denselben Cron-Zeitplan und dieselbe Zeitzone wie beim Job
-   einstellen. Für `0 3 * * *`, `Europe/Berlin` und `job_timeout: "10m"` z. B.
-   eine Grace Time von 15 Minuten vorsehen. Benachrichtigungskanäle dort aktivieren.
-5. Dienst neu starten, entsperren und einen erfolgreichen Job ausführen.
-   Prüfen, dass der Check aktiv überwacht wird und der Ping eingegangen ist.
-   Ein neu angelegter, noch nicht gestarteter Check kann bis zum ersten Ping
-   auf seine Aktivierung warten.
+   Do not use a `/start`, `/fail`, `/log`, exit-code, or slug URL.
+3. Make the file readable by the container user `65532:65532` and set file mode
+   `0400` or `0600`, or use the option below for NAS ACLs.
+   The URL is a secret: anyone who knows it can fake success notifications.
+   Do not put it in Git, logs, or shell arguments.
+4. Configure the same cron schedule and time zone in healthchecks.io as for the
+   job. For `0 3 * * *`, `Europe/Berlin`, and `job_timeout: "10m"`, for example,
+   allow a grace time of 15 minutes. Enable notification channels there.
+5. Restart the service, unlock it, and run a successful job.
+   Verify that the check is actively monitored and the ping has arrived.
+   A newly created check that has not yet started may wait for its first ping
+   before becoming active.
 
-**Synology/NAS:** Wenn die Datei über Host-/NAS-ACLs geschützt ist, aber
-POSIX-Gruppen-/Fremdrechte meldet, im bestehenden `healthchecks`-Objekt ergänzen:
+**Synology/NAS:** If the file is protected by host/NAS ACLs but reports POSIX
+group/other permissions, add this to the existing `healthchecks` object:
 
 ```json
 "allow_insecure_url_permissions": true
 ```
 
-Standard ist `false`. Bei `true` entfällt ausschließlich die POSIX-Rechteprüfung
-dieser Datei. Lesbarkeit, regulärer Dateityp, maximal 4096 Bytes sowie die
-Validierung der HTTPS-Erfolgs-URL mit Check-UUID bleiben erforderlich. Der
-Dienst wertet NAS-ACLs nicht selbst aus; den Zugriff auf Datei und Freigabe
-auf vertrauenswürdige Benutzer beschränken. Bei aktiviertem Monitoring gibt
-der Dienst beim Start eine Warnung aus. Die Webtoken-Option ersetzt diese
-separate Einstellung nicht. Nach einer Konfigurationsänderung neu starten und
-erneut entsperren. Zum Testen muss kein weiterer Löschlauf stattfinden:
-`dry_run: true` und `healthchecks.ping_on_dry_run: true` verwenden oder den
-nächsten regulären Lauf abwarten.
+The default is `false`. When `true`, only this file's POSIX permission check is
+skipped. Readability, a regular file type, a maximum size of 4096 bytes, and
+validation of the HTTPS success URL with its check UUID remain required.
+The service does not evaluate NAS ACLs; restrict access to the file and share
+to trusted users. When monitoring is enabled, the service logs a warning at
+startup. The web token option does not replace this separate setting.
+After changing the configuration, restart and unlock the service again.
+Testing does not require another deletion run: use `dry_run: true` and
+`healthchecks.ping_on_dry_run: true`, or wait for the next scheduled run.
 
-**„Schnell“ hängt vom Intervall ab:** Bei einem täglichen Job fällt eine
-ausbleibende Entsperrung unter Umständen erst am nächsten Tag plus Grace Time
-auf. Für eine kurze Erkennungszeit muss auch der Job entsprechend häufig laufen.
-Die Anwendung sendet absichtlich keinen Start-, Sperr-, Fehler- oder
-Lebenszeichen-Ping, der einen fehlenden erfolgreichen Job kaschieren könnte.
+**Detection speed depends on the interval:** For a daily job, failure to unlock
+may not be noticed until the next day plus the grace time.
+Short detection times require jobs to run correspondingly often.
+The application deliberately sends no start, lock, failure, or heartbeat ping
+that could conceal a missing successful job.
 
-Verhalten:
+Behavior:
 
-- Ein HTTPS-POST mit aggregierten Zählern erst nach erfolgreicher Verarbeitung **aller Konten und
-  Regeln inklusive Logout**. Auch ein erfolgreicher Lauf ohne Treffer zählt.
-- Kein Ping beim Starten/Entsperren, für `status`, bei Sperre, Überschneidung,
-  Timeout, Teilfehlern, überschrittenem Mengenlimit oder abgebrochenen Jobs.
-- Dry-Runs senden standardmäßig **keinen** Erfolgsping. Für einen bewusst
-  überwachten Testbetrieb `ping_on_dry_run: true` setzen.
-- Manuell gestartete Jobs und `once` können ebenfalls einen Erfolgsping senden;
-  für einen ausschließlich geplanten Check ggf. eine getrennte Konfiguration
-  ohne Monitoring bei manuellen Einmalläufen verwenden.
-- Nur aggregierte Treffer-/Aktionszahlen und ein Dry-Run-Kennzeichen im Request;
-  keine Konten-/Regelnamen, Ordner, Mailinhalte, Schlüssel oder Fehlermeldungen.
-  HTTP-Weiterleitungen werden nicht verfolgt; es gibt keine automatischen Retries.
-- Scheitert die Erfolgsmeldung, wird der Lauf mit generischem Monitoring-Fehler
-  als fehlgeschlagen angezeigt. Postfachänderungen bleiben bestehen. Bei einem
-  Timeout kann der Server den Ping bereits empfangen haben, obwohl lokal keine
-  Bestätigung eingetroffen ist.
-- Die URL-Datei wird pro Job neu gelesen. URL-Rotation benötigt keinen Neustart;
-  Konfigurationsänderungen dagegen schon.
+- An HTTPS POST with aggregate counts is sent only after successful processing
+  of **all accounts and rules, including logout**. A successful run with no
+  matches also counts.
+- No ping on startup/unlock, for `status`, while locked, on overlapping jobs,
+  timeouts, partial failures, exceeded message limits, or cancelled jobs.
+- Dry-runs send **no** success ping by default. Set `ping_on_dry_run: true` for
+  an intentionally monitored test setup.
+- Manually triggered jobs and `once` can also send a success ping; for a check
+  that should monitor scheduled runs only, consider a separate configuration
+  without monitoring for manual one-shot runs.
+- Requests contain only aggregate match/action counts and a dry-run flag;
+  no account/rule names, folders, message content, keys, or error messages.
+  HTTP redirects are not followed; there are no automatic retries.
+- If the success notification fails, the run is reported as failed with a
+  generic monitoring error. Mailbox changes remain in effect. On a timeout,
+  the server may already have received the ping even if no acknowledgment
+  arrived locally.
+- The URL file is read again for each job. URL rotation does not require a
+  restart; configuration changes do.
 
-Die Tests dieser Integration laufen über den vorhandenen GitHub-Actions-
-Testschritt mit künstlichen Endpunkten. Es wird kein echter healthchecks.io-Check
-aus dem CI angepingt.
+Tests for this integration run in the existing GitHub Actions test step using
+simulated endpoints. CI does not ping a real healthchecks.io check.
 
-### Job-Zähler im Ping
+### Job counts in the ping
 
-Der JSON-Body ist in den Ping-Details/Logs bei healthchecks.io einsehbar, z. B.:
+The JSON body is visible in the ping details/logs on healthchecks.io, e.g.:
 
 ```json
 {"matched":42,"archived":30,"deleted":12,"dry_run":false}
 ```
 
-- `matched`: Summe aller Treffer über Konten und Regeln.
-- `archived` / `deleted`: Summe der UIDs in erfolgreich bestätigten Archivierungs-
-  bzw. Löschbefehlen.
-- `dry_run`: Kennzeichnet einen optional aktivierten Dry-Run-Ping. Dabei bleiben
-  `archived` und `deleted` bei `0`, `matched` zeigt die gefundenen Treffer.
+- `matched`: total matches across accounts and rules.
+- `archived` / `deleted`: total UIDs in successfully confirmed archive/deletion
+  commands, respectively.
+- `dry_run`: identifies an optionally enabled dry-run ping. In this case,
+  `archived` and `deleted` remain `0`, while `matched` shows the matches found.
 
-Die Zahlen sind **keine Anzahl eindeutiger Nachrichten**: Dieselbe Mail kann
-in mehreren Regeln vorkommen, z. B. erst archiviert und dann gelöscht werden.
-Andere Mailclients können parallel Nachrichten verändern; die Zähler sind
-keine unabhängige Nachkontrolle der tatsächlich veränderten Nachrichten.
-healthchecks.io stellt damit die Ping-Nutzlast bereit; automatische
-Zeitreihengrafiken oder ein eigenes Statistik-Dashboard sind nicht implementiert.
+These figures are **not counts of unique messages**: the same message can
+match multiple rules, e.g. be archived first and deleted afterward.
+Other mail clients can modify messages concurrently; the counts are not an
+independent verification of the messages actually changed.
+healthchecks.io exposes the ping payload; automatic time-series charts or a
+dedicated statistics dashboard are not implemented.
 
-## Konfiguration und Regelsemantik
+## Configuration and rule semantics
 
-[`examples/config.json`](examples/config.json) enthält ein vollständiges Beispiel.
-Unbekannte Felder werden abgewiesen, damit Tippfehler nicht unbemerkt bleiben.
+[`examples/config.json`](examples/config.json) contains a complete example.
+Unknown fields are rejected so typos do not go unnoticed.
 
-| Feld | Bedeutung |
+| Field | Meaning |
 |---|---|
-| `credentials_file` | Lokal gespeicherte age-Datei; pro Job neu eingelesen, maximal 1 MiB |
-| `schedule` | Fünffeld-Cron, standardmäßig `0 3 * * *`; `""` deaktiviert den integrierten Zeitplan |
-| `timezone` | IANA-Zeitzone, standardmäßig `UTC`; Zeitzonendaten im Binary enthalten |
-| `dry_run` | Standardmäßig `true`; nur suchen und zählen, Quelle read-only öffnen |
-| `max_messages_per_rule` | Positive Grenze, standardmäßig 1000; bei Überschreitung keine Änderung durch diese Regel |
-| `job_timeout` / `command_timeout` | Positive Go-Zeitspannen, standardmäßig `10m` / `30s` |
-| `socket` | Privater lokaler Kontroll-Socket |
-| `web.allow_insecure_token_permissions` | Standardmäßig `false`; bei `true` nur die POSIX-Rechteprüfung der Webtoken-Datei überspringen, z. B. bei NAS-ACLs; Zugriff dann auf dem Host absichern |
-| `healthchecks.enabled` | Optionales Erfolgsmonitoring, standardmäßig `false` |
-| `healthchecks.url_file` | Private Datei mit HTTPS-Erfolgs-URL und Check-UUID |
-| `healthchecks.allow_insecure_url_permissions` | Standardmäßig `false`; bei `true` nur die POSIX-Rechteprüfung der URL-Datei überspringen; Zugriff dann über Host-/NAS-ACLs absichern |
-| `healthchecks.timeout` | Positiver HTTP-Timeout bis 1 Minute, standardmäßig `5s`; zusätzlich gilt der Job-Timeout |
-| `healthchecks.ping_on_dry_run` | Dry-Run ebenfalls melden, standardmäßig `false` |
-| `accounts[].name` | Eindeutiger Alias; derselbe Name wird in den verschlüsselten Zugangsdaten verwendet |
-| `accounts[].server` | `host:port`, z. B. `imap.example.com:993` |
-| `accounts[].tls_mode` | `tls` (implizit, meistens 993) oder verpflichtendes `starttls` (meistens 143) |
-| `rules[].action` | `archive` oder `delete` |
-| `rules[].mailbox` | Exakter IMAP-Quellordner, inklusive anbieterspezifischem Hierarchietrenner |
-| `rules[].destination` | Bestehender Zielordner, nur für `archive` |
-| `rules[].older_than_days` | 1–36500 Tage; Null/negative Werte werden abgewiesen |
+| `credentials_file` | Local age file; read again for each job, maximum 1 MiB |
+| `schedule` | Five-field cron, default `0 3 * * *`; `""` disables the built-in schedule |
+| `timezone` | IANA time zone, default `UTC`; time zone data is embedded in the binary |
+| `dry_run` | Default `true`; search and count only, open the source read-only |
+| `max_messages_per_rule` | Positive limit, default 1000; if exceeded, this rule makes no changes |
+| `job_timeout` / `command_timeout` | Positive Go durations, default `10m` / `30s` |
+| `socket` | Private local control socket |
+| `web.allow_insecure_token_permissions` | Default `false`; when `true`, skip only the web token file's POSIX permission check, e.g. for NAS ACLs; secure access on the host instead |
+| `healthchecks.enabled` | Optional success monitoring, default `false` |
+| `healthchecks.url_file` | Private file containing the HTTPS success URL and check UUID |
+| `healthchecks.allow_insecure_url_permissions` | Default `false`; when `true`, skip only the URL file's POSIX permission check; secure access through host/NAS ACLs instead |
+| `healthchecks.timeout` | Positive HTTP timeout up to 1 minute, default `5s`; the job timeout also applies |
+| `healthchecks.ping_on_dry_run` | Also report dry-runs, default `false` |
+| `accounts[].name` | Unique alias; the same name is used in encrypted credentials |
+| `accounts[].server` | `host:port`, e.g. `imap.example.com:993` |
+| `accounts[].tls_mode` | `tls` (implicit, usually 993) or mandatory `starttls` (usually 143) |
+| `rules[].action` | `archive` or `delete` |
+| `rules[].mailbox` | Exact IMAP source folder, including the provider-specific hierarchy separator |
+| `rules[].destination` | Existing destination folder, only for `archive` |
+| `rules[].older_than_days` | 1–36500 days; zero/negative values are rejected |
 
-### Was „älter als“ bedeutet
+### What "older than" means
 
-Wie in den Vorgängern wird IMAP `BEFORE` verwendet: Maßgeblich ist das
-**INTERNALDATE-Datum**, nicht der `Date`-Header. Der Stichtag ist heute minus
-Aufbewahrungstage, auf Kalendertage in der konfigurierten Zeitzone bezogen.
-Nachrichten vom Stichtag selbst bleiben erhalten. Das sind keine rollierenden
-24-Stunden-Fenster; IMAP vergleicht hierbei Datumsteile, keine exakten Zeitpunkte.
+As in the predecessor projects, IMAP `BEFORE` is used: the **INTERNALDATE date**
+is authoritative, not the `Date` header. The cutoff is today minus the retention
+period, using calendar days in the configured time zone.
+Messages dated on the cutoff day are retained. These are not rolling 24-hour
+windows; IMAP compares date components here, not exact timestamps.
 
-### Reihenfolge, Fehler und Schutzgrenzen
+### Ordering, errors, and safety limits
 
-- Konten und Regeln werden in Konfigurationsreihenfolge ausgeführt.
-- Regeln sehen die Ergebnisse früherer Regeln. Eine Nachricht kann daher
-  innerhalb eines Jobs erst archiviert und anschließend durch eine spätere
-  Regel gelöscht werden. Archivieren ändert ihr ursprüngliches INTERNALDATE nicht.
-- Bei Fehlern stoppt das betreffende Konto; weitere Konten werden versucht.
-- Die Mengengrenze gilt **pro Regel**, nicht pro Job. Bereits abgeschlossene
-  Regeln werden bei späteren Fehlern nicht zurückgerollt.
-- Änderungen werden in UID-Blöcken von maximal 200 angefordert. Nach einem
-  Netzwerkfehler sind Teiländerungen möglich; vor einem erneuten Lauf prüfen.
-- „Bestätigte UIDs“ zählt UIDs in erfolgreich bestätigten Befehlen, nicht eine
-  unabhängig verifizierte Anzahl geänderter Nachrichten. Andere Mailclients
-  können gleichzeitig Nachrichten bewegen oder löschen.
-- Archivieren benötigt **MOVE**. Kein COPY-/EXPUNGE-Fallback.
-- Löschen benötigt **UIDPLUS** und verwendet ausschließlich `UID STORE` plus
-  `UID EXPUNGE` der ausgewählten UIDs. Kein globales `EXPUNGE`, kein `CLOSE`.
-- Dry-Run kann auch ohne MOVE/UIDPLUS zählen; Unterstützung vor dem Echtbetrieb prüfen.
-- Während der Sperre verpasste Jobs werden nicht nachgeholt. Entsperren löst
-  keinen sofortigen Lauf aus; der nächste Cron-Termin oder „Job jetzt starten“ gilt.
-- Cron-Zeitzonen und Sommerzeit beachten: nicht existierende Uhrzeiten werden
-  übersprungen; UTC vermeidet lokale Sommerzeit-Sonderfälle.
+- Accounts and rules execute in configuration order.
+- Rules see the results of earlier rules. A message can therefore be archived
+  and subsequently deleted by a later rule within the same job.
+  Archiving does not change its original INTERNALDATE.
+- On errors, processing stops for the affected account; other accounts are attempted.
+- The message limit applies **per rule**, not per job. Completed rules are not
+  rolled back if later errors occur.
+- Changes are requested in UID batches of at most 200. Network errors may leave
+  partial changes; check before running again.
+- "Confirmed UIDs" counts UIDs in successfully confirmed commands, not an
+  independently verified number of modified messages. Other mail clients can
+  move or delete messages concurrently.
+- Archiving requires **MOVE**. No COPY/EXPUNGE fallback.
+- Deletion requires **UIDPLUS** and uses only `UID STORE` followed by
+  `UID EXPUNGE` for the selected UIDs. No global `EXPUNGE`, no `CLOSE`.
+- Dry-run can count without MOVE/UIDPLUS; check support before live operation.
+- Jobs missed while locked are not caught up. Unlocking does not trigger an
+  immediate run; the next cron time or "Run job now" applies.
+- Consider cron time zones and daylight saving time: nonexistent times are
+  skipped; UTC avoids local daylight saving edge cases.
 
-## Zugangsdaten rotieren
+## Rotate credentials
 
-Mit dem gespeicherten öffentlichen `age1…`-Empfänger eine neue Datei erzeugen:
+Create a new file using the saved public `age1…` recipient:
 
 ```bash
 docker run --rm -it --network none \
@@ -435,12 +429,12 @@ docker run --rm -it --network none \
   --mount "type=bind,src=$PWD,dst=/work" \
   ghcr.io/kevincfechtel/mailboxcleanup:latest credentials \
   --accounts personal \
-  --recipient age1DEIN_OEFFENTLICHER_EMPFAENGER \
+  --recipient age1YOUR_PUBLIC_RECIPIENT \
   --output /work/credentials.next.age
 ```
 
-Alle konfigurierten Konten neu eingeben. Die neue Datei mit passenden
-Dateirechten atomar als `config/credentials.age` installieren. Beispiel:
+Re-enter all configured accounts. Install the new file atomically as
+`config/credentials.age` with appropriate file permissions. Example:
 
 ```bash
 sudo chown 65532:65532 credentials.next.age
@@ -448,91 +442,91 @@ sudo chmod 0400 credentials.next.age
 sudo mv credentials.next.age config/credentials.age
 ```
 
-Die nächste Ausführung liest die neue Datei. Compose mountet dafür das ganze
-Verzeichnis, nicht einen einzelnen Datei-Inode. Der private Schlüssel bleibt
-gleich; bei Wechsel des Schlüssels den Dienst sperren und neu entsperren.
+The next run reads the new file. Compose mounts the entire directory for this
+reason, rather than a single file inode. The private key stays the same;
+if the key changes, lock the service and unlock it again.
 
-Web-Token separat rotieren: neue Token-Datei erzeugen, geschützt ersetzen und
-Dienst neu starten. Dadurch verfallen alle Browser-Sitzungen und eine erneute
-IMAP-Entsperrung ist erforderlich.
+Rotate the web token separately: create a new token file, replace it securely,
+and restart the service. This invalidates all browser sessions and requires
+IMAP access to be unlocked again.
 
-## Migration und Analyse der Vorgänger
+## Migration and analysis of predecessor projects
 
-Analysierte Stände:
+Revisions analyzed:
 
 - ImapDelete: `ffccead6cb32d3465ad12957f8c32a2377e7f367`
 - ImapArchive: `2a729fe66252fe9df76d165c33be004e3ad5e345`
-- CupNotifyer: CI-/Dependabot-Vorlage von `main` während der Implementierung.
+- CupNotifyer: CI/Dependabot template from `main` at the time of implementation.
 
-Beide Vorgänger bestehen aus Go-Einstiegspunkt, JSON-Konfiguration, nahezu
-identischem IMAP-Handler und optionalem gocron-Dienst. ImapDelete entfernt
-Nachrichten, ImapArchive verschiebt sie. Die Zusammenführung übernimmt diese
-Kernfunktionen, nicht die unsicheren Implementierungsdetails.
+Both predecessors consist of a Go entry point, JSON configuration, a nearly
+identical IMAP handler, and an optional gocron service. ImapDelete removes
+messages; ImapArchive moves them. This combined project preserves those core
+features, not the unsafe implementation details.
 
-| Befund im Altcode | Umsetzung hier |
+| Finding in the old code | Implementation here |
 |---|---|
-| `user`/`pass` in JSON, optional unverschlüsseltes IMAP | Verschlüsselter Credential-Container, zwingendes TLS |
-| IMAP-Body/Envelope wird nur zur UID-Auswahl heruntergeladen | Nur UID-Suche, keine Nachrichteninhalte und keine implizite Lesemarkierung |
-| Regel- und Mutationsfehler werden ignoriert, Treffer als Erfolg gezählt | Explizite Teilergebnisse, Fehlerstatus und Konto-Abbruch |
-| Globales `EXPUNGE` und `CLOSE` beim Abmelden | Gezieltes UID EXPUNGE, ausschließlich LOGOUT |
-| Archivierung arbeitet mit Sequenznummern und Bibliotheks-Fallback | Ausschließlich nativer UID MOVE |
-| Endloses Warten ohne Signalbehandlung/Timeouts | Kontext-Abbruch, SIGTERM/SIGINT und kontrolliertes Beenden |
-| HTTP-Logger kann nach Netzwerkfehler `nil` dereferenzieren; Antwort-Body bleibt offen | Strukturierte lokale, bereinigte JSON-Logs statt externer Log-Übermittlung |
-| Container mit unfixiertem Basisimage und Shell-Entrypoint | Versionierter Multi-Stage-Build, statisches Nicht-Root-Image ohne Shell |
+| `user`/`pass` in JSON, optional unencrypted IMAP | Encrypted credential store, mandatory TLS |
+| IMAP body/envelope downloaded just to select UIDs | UID search only, no message content or implicit marking as read |
+| Rule and mutation errors ignored, matches counted as success | Explicit partial results, failure status, and processing stopped for the affected account |
+| Global `EXPUNGE` and `CLOSE` on logout | Targeted UID EXPUNGE, LOGOUT only |
+| Archiving uses sequence numbers and a library fallback | Native UID MOVE only |
+| Indefinite waiting without signal handling/timeouts | Context cancellation, SIGTERM/SIGINT, and controlled shutdown |
+| HTTP logger can dereference `nil` after network errors; response body left open | Structured, local, sanitized JSON logs instead of external log delivery |
+| Container with unpinned base image and shell entrypoint | Versioned multi-stage build, static non-root image without a shell |
 
-Alte JSON-Dateien werden **nicht direkt eingelesen**, insbesondere keine
-Klartext-Passwörter. Manuelle Zuordnung:
+Old JSON files are **not loaded directly**, especially not plaintext passwords.
+Manual mapping:
 
-| Alt | Neu |
+| Old | New |
 |---|---|
-| `server` + `port` | `accounts[].server` als `host:port` |
-| `user` / `pass` | Interaktiver `credentials`-Befehl |
+| `server` + `port` | `accounts[].server` as `host:port` |
+| `user` / `pass` | Interactive `credentials` command |
 | `tls: true` | `tls_mode: "tls"` |
-| `cronScheduleConfig` | `schedule` plus explizite `timezone` |
-| Delete: `durations[].mailbox` / `duration` | Regel `action: "delete"`, `mailbox`, `older_than_days` |
-| Archive: `sourceMailbox` / `destMailbox` / `duration` | Regel `action: "archive"`, `mailbox`, `destination`, `older_than_days` |
-| `logurl` | Entfällt; strukturierte lokale Logs, kein automatischer externer Versand |
-| `-runAsService` / `-configFile` | `serve --config …` bzw. `once --config …` |
+| `cronScheduleConfig` | `schedule` plus an explicit `timezone` |
+| Delete: `durations[].mailbox` / `duration` | Rule with `action: "delete"`, `mailbox`, `older_than_days` |
+| Archive: `sourceMailbox` / `destMailbox` / `duration` | Rule with `action: "archive"`, `mailbox`, `destination`, `older_than_days` |
+| `logurl` | Removed; structured local logs, no automatic external delivery |
+| `-runAsService` / `-configFile` | `serve --config …` or `once --config …`, respectively |
 
-Alte `duration: 0`-Regeln werden bewusst nicht übernommen: eine positive
-Aufbewahrungsfrist ist erforderlich. Alte Klartext-Dateien und Backups
-entsprechend behandeln und enthaltene Passwörter möglichst rotieren.
+Old `duration: 0` rules are deliberately not supported: a positive retention
+period is required. Handle old plaintext files and backups accordingly, and
+rotate any passwords they contain where possible.
 
-## Entwicklung und GitHub Actions
+## Development and GitHub Actions
 
-Tests, Build- und Sicherheitsprüfungen laufen in GitHub Actions, nicht auf
-der NAS oder durch lokale Werkzeuginstallation. Der Workflow verwendet
-die Go-Version aus `go.mod` und validiert außerdem die Compose-Konfiguration.
+Tests, builds, and security checks run in GitHub Actions, not on the NAS or
+through locally installed tools. The workflow uses the Go version from
+`go.mod` and also validates the Compose configuration.
 
-Die Tests verwenden künstliche Zugangsdaten und einen lokalen geskripteten
-IMAP-Transport; kein echtes Postfach. Vor produktivem Löschen zusätzlich mit
-einem eigenen Testkonto beim tatsächlichen Anbieter prüfen.
+Tests use synthetic credentials and a local scripted IMAP transport, not a real
+mailbox. Before deleting production messages, also verify behavior using a
+dedicated test account at the actual provider.
 
-Die an CupNotifyer orientierte CI bietet:
+The CI, modeled after CupNotifyer, provides:
 
-- Formatprüfung, Race-Tests, `go vet`, Build und `govulncheck`;
-- Dependency Review und CodeQL, soweit GitHub-Lizenz/Repositoreinstellungen dies erlauben;
-- Container-Build und Trivy-Scan für **amd64 und arm64**, auch für Pull Requests;
-- Veröffentlichung nach erfolgreichen Prüfungen nur für SemVer-Tags wie `v1.2.3`
-  unter `ghcr.io/kevincfechtel/mailboxcleanup`;
-- `latest` nur für stabile Releases, außerdem Versions- und SHA-Tags;
-- Multiarch-Images mit SBOM und Build-Provenance;
-- wöchentliche Sicherheitsläufe und Dependabot für Go, Actions und Docker;
-- Actions und Trivy-Image auf konkrete Commit-/Digest-Stände fixiert.
+- Formatting checks, race tests, `go vet`, build, and `govulncheck`;
+- Dependency Review and CodeQL where the GitHub plan/repository settings allow;
+- Container builds and Trivy scans for **amd64 and arm64**, including pull requests;
+- Publishing only after successful checks for SemVer tags such as `v1.2.3`,
+  under `ghcr.io/kevincfechtel/mailboxcleanup`;
+- `latest` only for stable releases, plus version and SHA tags;
+- Multi-architecture images with SBOM and build provenance;
+- Weekly security runs and Dependabot for Go, Actions, and Docker;
+- Actions and the Trivy image pinned to specific commits/digests.
 
-Für **private Repositories** sind CodeQL, Dependency Review und SARIF-Upload
-standardmäßig deaktiviert, weil dafür passende GitHub-Sicherheitsfunktionen
-erforderlich sind. Sind diese verfügbar und aktiviert, die Repository-Variable
-`ENABLE_GITHUB_SECURITY=true` setzen. Lokale Trivy-/Go-Scans bleiben auch ohne
-diese Funktionen aktiv. Für GHCR-Publishing benötigt `GITHUB_TOKEN` die im
-Workflow angegebene `packages: write`-Berechtigung und das Repository muss das
-Paket veröffentlichen dürfen.
+For **private repositories**, CodeQL, Dependency Review, and SARIF uploads are
+disabled by default because they require the relevant GitHub security features.
+If these features are available and enabled, set the repository variable
+`ENABLE_GITHUB_SECURITY=true`. Local Trivy/Go scans remain active without these
+features. For GHCR publishing, `GITHUB_TOKEN` needs the `packages: write`
+permission specified in the workflow, and the repository must be allowed to
+publish the package.
 
-Es wurden keine IMAP-Zugangsdaten in GitHub Secrets hinterlegt; die CI greift
-niemals auf ein echtes Postfach zu.
+No IMAP credentials have been stored in GitHub Secrets; CI never accesses a
+real mailbox.
 
-## Sicherheitsgrenzen
+## Security boundaries
 
-Siehe [`SECURITY.md`](SECURITY.md). Verschlüsselung schützt gespeicherte Dateien
-und Backups, nicht einen kompromittierten entsperrten Host. Swap, Speicherabbilder,
-Host-Zugriff, NAS-Backups, Browser und Passwortmanager sind Teil des Schutzkonzepts.
+See [`SECURITY.md`](SECURITY.md). Encryption protects stored files and backups,
+not a compromised unlocked host. Swap, memory dumps, host access, NAS backups,
+browsers, and password managers are all part of the security model.

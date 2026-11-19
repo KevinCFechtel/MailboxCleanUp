@@ -161,7 +161,7 @@ func (u *UI) logIn(w http.ResponseWriter, r *http.Request) {
 	hash := sha256.Sum256([]byte(r.PostForm.Get("token")))
 	if subtle.ConstantTimeCompare(hash[:], u.token[:]) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
-		u.render(w, view{Message: "Anmeldung fehlgeschlagen."})
+		u.render(w, view{Message: "Sign-in failed."})
 		return
 	}
 	cookie := randomToken()
@@ -218,19 +218,19 @@ func (u *UI) action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := u.service.Unlock(r.PostForm.Get("key")); err != nil {
-			message = "Entsperren fehlgeschlagen: Schlüssel, Datei oder laufenden Job prüfen."
+			message = "Unlock failed: check the key, file, or running job."
 		} else {
-			message = "Entsperrt. Geplante Jobs können jetzt laufen."
+			message = "Unlocked. Scheduled jobs can now run."
 		}
 		r.PostForm.Del("key")
 	case "/lock":
 		u.service.Lock()
-		message = "Gesperrt. Ein laufender Job wird abgebrochen."
+		message = "Locked. Any running job will be cancelled."
 	case "/run":
 		if err := u.service.Trigger(u.ctx); err != nil {
-			message = "Job nicht gestartet: Dienst gesperrt oder bereits beschäftigt."
+			message = "Job not started: service is locked or already busy."
 		} else {
-			message = "Job gestartet. Seite zum Prüfen des Ergebnisses aktualisieren."
+			message = "Job started. Refresh the page to check the result."
 		}
 	case "/logout":
 		cookie, _ := r.Cookie(cookieName)
@@ -257,34 +257,34 @@ func (u *UI) render(w http.ResponseWriter, v view) {
 }
 
 var page = template.Must(template.New("index").Parse(`<!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MailboxCleanUp</title><link rel="stylesheet" href="/style.css"></head>
-<body><main><header><p class="eyebrow">LOKAL · VERSCHLÜSSELT · KONTROLLIERT</p><h1>MailboxCleanUp</h1>
-<p>Archivieren und aufräumen. Du behältst den Schlüssel.</p></header>
+<body><main><header><p class="eyebrow">LOCAL · ENCRYPTED · CONTROLLED</p><h1>MailboxCleanUp</h1>
+<p>Archive and clean up. You keep the key.</p></header>
 {{if .Message}}<p role="status" class="notice">{{.Message}}</p>{{end}}
 {{if not .Authenticated}}
-<section><h2>Anmelden</h2><p>Der Web-Zugangstoken ist unabhängig vom Entschlüsselungsschlüssel.</p>
-<form action="/login" method="post"><label>Zugangstoken<input type="password" name="token" required autocomplete="off" maxlength="4096"></label><button>Anmelden</button></form></section>
+<section><h2>Sign in</h2><p>The web access token is separate from the decryption key.</p>
+<form action="/login" method="post"><label>Access token<input type="password" name="token" required autocomplete="off" maxlength="4096"></label><button>Sign in</button></form></section>
 {{else}}
-<section><h2>Dienststatus</h2><p class="badge">{{if .Status.Unlocked}}Entsperrt{{else}}Gesperrt{{end}}{{if .Status.Running}} · Job läuft{{end}}</p>
-<p>{{if .Status.DryRun}}Dry-Run aktiv: keine Änderungen{{else}}Änderungsmodus aktiv: Regeln verändern das Postfach{{end}}<br>Zeitplan: {{if .Status.Schedule}}{{.Status.Schedule}} · {{.Status.Timezone}}{{else}}Nur externe / manuelle Aufrufe{{end}}</p>
-<p>Nach einem Neustart muss der Dienst erneut entsperrt werden. Abmelden sperrt den Dienst nicht.</p><a href="/">Status aktualisieren</a></section>
-{{if not .Status.Unlocked}}<section><h2>Postfachzugriff entsperren</h2>
+<section><h2>Service status</h2><p class="badge">{{if .Status.Unlocked}}Unlocked{{else}}Locked{{end}}{{if .Status.Running}} · Job running{{end}}</p>
+<p>{{if .Status.DryRun}}Dry-run enabled: no changes{{else}}Live mode enabled: rules modify the mailbox{{end}}<br>Schedule: {{if .Status.Schedule}}{{.Status.Schedule}} · {{.Status.Timezone}}{{else}}External / manual triggers only{{end}}</p>
+<p>The service must be unlocked again after a restart. Signing out does not lock the service.</p><a href="/">Refresh status</a></section>
+{{if not .Status.Unlocked}}<section><h2>Unlock mailbox access</h2>
 <form action="/unlock" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Privater age-Schlüssel<input type="password" name="key" required autocomplete="off" spellcheck="false" maxlength="1024"></label>
-<p>Nur aus deinem Passwortmanager übernehmen. Wird nicht dauerhaft gespeichert.</p><button>Entsperren</button></form></section>{{end}}
-<section><h2>Aktionen</h2><div class="actions">
-<form action="/run" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button {{if not .Status.Unlocked}}disabled{{end}}>Job jetzt starten</button></form>
-<form action="/lock" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Dienst sperren</button></form>
-<form action="/logout" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Abmelden</button></form></div>
-<p>Es gilt immer die konfigurierte Dry-Run-Einstellung. Diese Oberfläche kann sie nicht überschreiben.</p></section>
-{{with .Status.Last}}<section><h2>Letzter Job</h2>
-<p>{{if .Success}}Erfolgreich{{else}}Fehlgeschlagen{{end}} · {{if .DryRun}}Dry-Run: keine Änderungen{{else}}Änderungsmodus{{end}}</p>
-<p>Start: {{.Started.Format "2006-01-02 15:04:05 MST"}}<br>Ende: {{.Finished.Format "2006-01-02 15:04:05 MST"}}</p>
+<label>Private age key<input type="password" name="key" required autocomplete="off" spellcheck="false" maxlength="1024"></label>
+<p>Copy it only from your password manager. It is not stored persistently.</p><button>Unlock</button></form></section>{{end}}
+<section><h2>Actions</h2><div class="actions">
+<form action="/run" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button {{if not .Status.Unlocked}}disabled{{end}}>Run job now</button></form>
+<form action="/lock" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Lock service</button></form>
+<form action="/logout" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary">Sign out</button></form></div>
+<p>The configured dry-run setting always applies. This interface cannot override it.</p></section>
+{{with .Status.Last}}<section><h2>Last job</h2>
+<p>{{if .Success}}Successful{{else}}Failed{{end}} · {{if .DryRun}}Dry-run: no changes{{else}}Live mode{{end}}</p>
+<p>Start: {{.Started.Format "2006-01-02 15:04:05 MST"}}<br>End: {{.Finished.Format "2006-01-02 15:04:05 MST"}}</p>
 {{if .Error}}<p>{{.Error}}</p>{{end}}
-<div class="table"><table><thead><tr><th>Konto / Regel</th><th>Treffer</th><th>Bestätigte UIDs</th><th>Fehler</th></tr></thead><tbody>
+<div class="table"><table><thead><tr><th>Account / Rule</th><th>Matches</th><th>Confirmed UIDs</th><th>Error</th></tr></thead><tbody>
 {{range .Results}}<tr><td>{{.Account}} / {{.Rule}}</td><td>{{.Matched}}</td><td>{{.Changed}}</td><td>{{.Error}}</td></tr>{{end}}
 </tbody></table></div></section>{{end}}
-{{end}}<footer>Keine Mailinhalte. Keine externen Skripte. Keine Analyse-Dienste.</footer></main></body></html>`))
+{{end}}<footer>No message content. No external scripts. No analytics services.</footer></main></body></html>`))
 
 const styles = `:root{color-scheme:dark;font:16px/1.6 system-ui,sans-serif;background:#101923;color:#e8eff4}*{box-sizing:border-box}body{margin:0}main{max-width:900px;margin:auto;padding:48px 24px}header{margin-bottom:36px}h1{font-size:clamp(2rem,6vw,3.5rem);letter-spacing:-.05em;margin:8px 0}h2{font-size:1.2rem;margin-top:0}.eyebrow{letter-spacing:.14em;font-size:.7rem;color:#6edac2}p,footer{color:#b2c1cd}section{padding:24px;background:#182532;border:1px solid #2a3b4b;border-radius:16px;margin:16px 0}label{display:block}input{width:100%;padding:12px;margin:8px 0 16px;background:#101923;color:#fff;border:1px solid #526678;border-radius:8px;font:inherit}button{padding:11px 18px;border:0;border-radius:8px;background:#6edac2;color:#102323;font:inherit;font-weight:650;cursor:pointer}button.secondary{background:#304355;color:#e8eff4}button:disabled{opacity:.4;cursor:default}.actions{display:flex;flex-wrap:wrap;gap:12px}.badge,.notice{color:#8fe9d5}.notice{padding:16px;border:1px solid #6edac2;border-radius:8px}a{color:#8fe9d5}footer{font-size:.8rem;margin-top:32px}.table{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}th,td{padding:10px;border-bottom:1px solid #304355}input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid #8fe9d5;outline-offset:3px}`
