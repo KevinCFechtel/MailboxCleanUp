@@ -218,6 +218,7 @@ The minimal image has no shell; run the command directly:
 ```bash
 docker exec -it mailboxcleanup mailboxcleanup unlock
 docker exec mailboxcleanup mailboxcleanup status
+docker exec mailboxcleanup mailboxcleanup healthcheck
 docker exec mailboxcleanup mailboxcleanup run
 docker exec mailboxcleanup mailboxcleanup lock
 ```
@@ -236,6 +237,24 @@ All control commands support `--socket PATH`. The default is
 `/run/mailboxcleanup/control.sock`, with file mode `0600`. Only processes with
 access to this socket may control the service. Docker/host administrators are
 considered trusted.
+
+### Container healthcheck
+
+Compose runs `mailboxcleanup healthcheck` every 30 seconds through the private
+control socket, including when the web interface is disabled. It checks daemon
+availability and whether mailbox access is unlocked (not the browser sign-in
+session). The command times out after 4 seconds.
+
+- Unlocked: `{"healthy":true,"unlocked":true}`, exit code `0`.
+- Locked: `{"healthy":false,"unlocked":false}`, exit code `1`.
+- Unreachable daemon or invalid status: exit code `1` with an error message.
+
+After a restart or manual locking, the container becomes `unhealthy` until
+mailbox access is unlocked. Docker marks it healthy at the next successful
+check; an unhealthy status alone does not restart the container.
+`status` remains an informational command and succeeds even while locked.
+The healthcheck neither runs a job nor tests IMAP connectivity; review job
+results or use the healthchecks.io integration to monitor successful processing.
 
 ### External cron and one-shot execution
 
@@ -260,7 +279,7 @@ For the intended workflow, use `serve` with the built-in cron or `run`.
 The optional integration reports **only fully successful jobs**, not container
 availability. After a restart, the service remains locked and sends no pings
 until it has been unlocked and a job has completed successfully.
-The Docker healthcheck is independent: a locked service can still be healthy.
+The Docker healthcheck is independent and reports a locked service as unhealthy.
 
 Configuration:
 

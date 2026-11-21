@@ -45,7 +45,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: mailboxcleanup {serve|once|unlock|lock|status|run|credentials|web-token} [options]")
+		return errors.New("usage: mailboxcleanup {serve|once|unlock|lock|status|healthcheck|run|credentials|web-token} [options]")
 	}
 	switch args[0] {
 	case "serve", "once":
@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string) error {
 			return errors.New("job failed")
 		}
 		return nil
-	case "unlock", "lock", "status", "run":
+	case "unlock", "lock", "status", "healthcheck", "run":
 		return controlCommand(ctx, args)
 	case "credentials":
 		return createCredentials(args[1:])
@@ -96,6 +96,7 @@ func run(ctx context.Context, args []string) error {
   unlock [--key-stdin]                 Unlock the daemon; otherwise hidden terminal input
   lock                                Lock daemon and cancel active job
   status                              Show sanitized daemon status as JSON
+  healthcheck                         Check daemon availability and unlocked state
   run                                 Trigger a job in the unlocked daemon
   once --config config.json           Standalone job; prompts for key
   credentials --accounts personal     Create encrypted credentials and an age key
@@ -230,7 +231,14 @@ func controlCommand(ctx context.Context, args []string) error {
 		return errors.New("unexpected arguments")
 	}
 	method := http.MethodPost
-	if args[0] == "status" {
+	path := args[0]
+	if path == "healthcheck" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 4*time.Second)
+		defer cancel()
+		path = "status"
+	}
+	if path == "status" {
 		method = http.MethodGet
 	}
 	var body io.Reader
@@ -242,7 +250,7 @@ func controlCommand(ctx context.Context, args []string) error {
 		defer clear(key)
 		body = strings.NewReader(string(key))
 	}
-	request, err := http.NewRequestWithContext(ctx, method, "http://localhost/"+args[0], body)
+	request, err := http.NewRequestWithContext(ctx, method, "http://localhost/"+path, body)
 	if err != nil {
 		return errors.New("cannot create control request")
 	}
@@ -260,10 +268,34 @@ func controlCommand(ctx context.Context, args []string) error {
 	if response.StatusCode >= 300 {
 		return fmt.Errorf("daemon: %s", strings.TrimSpace(string(data)))
 	}
+	if args[0] == "healthcheck" {
+		return checkHealth(os.Stdout, data)
+	}
 	if len(data) > 0 {
 		_, _ = os.Stdout.Write(data)
 	} else {
 		fmt.Println("OK")
+	}
+	return nil
+}
+
+func checkHealth(w io.Writer, data []byte) error {
+	// A missing unlocked field must not be mistaken for a valid locked status.
+	var status struct {
+		Unlocked *bool `json:"unlocked"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil || status.Unlocked == nil {
+		return errors.New("invalid daemon status")
+	}
+	result := struct {
+		Healthy  bool `json:"healthy"`
+		Unlocked bool `json:"unlocked"`
+	}{Healthy: *status.Unlocked, Unlocked: *status.Unlocked}
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		return err
+	}
+	if !result.Unlocked {
+		return errors.New("service is locked; unlock mailbox access")
 	}
 	return nil
 }
