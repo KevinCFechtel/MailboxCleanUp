@@ -218,7 +218,8 @@ func (u *UI) action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := u.service.Unlock(r.PostForm.Get("key")); err != nil {
-			message = "Unlock failed: check the key, file, or running job."
+			// Service unlock errors contain only sanitized diagnostics, not input or credentials.
+			message = "Unlock failed: " + err.Error() + "."
 		} else {
 			message = "Unlocked. Scheduled jobs can now run."
 		}

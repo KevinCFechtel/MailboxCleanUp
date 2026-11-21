@@ -124,6 +124,28 @@ permissions. For ACL-managed NAS shares, see the following section.
 Subsequent edits to these files require the appropriate host administrator
 permissions.
 
+#### Troubleshooting unlocking
+
+Unlocking requires the private `AGE-SECRET-KEY-…`, not the public `age1…`
+recipient or the web access token. The web interface displays a sanitized
+failure reason; failed unlock attempts and successful unlocking are also
+recorded in `docker compose logs mailboxcleanup`, without keys or credentials.
+
+To diagnose an existing installation from the terminal:
+
+```bash
+docker exec -it mailboxcleanup mailboxcleanup unlock
+```
+
+The key is prompted for with input hidden. A missing credentials file indicates
+a wrong `credentials_file` path or mount. Permission errors require checking
+read access for container UID/GID `65532:65532`, including directory traversal
+and NAS ACLs. A decryption failure can mean a mismatched key or an invalid file;
+missing account credentials mean the configured account names do not match
+the encrypted file, or its username/password fields are empty.
+Do not regenerate or overwrite the encrypted credentials while diagnosing,
+and never paste private keys or decrypted contents into logs or bug reports.
+
 #### Synology/NAS: Manage web token permissions through ACLs
 
 If the NAS reports POSIX group/other permissions despite restrictive ACLs,

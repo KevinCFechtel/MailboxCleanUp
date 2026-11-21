@@ -77,6 +77,12 @@ func (s *Store) read(id *age.X25519Identity) (Credentials, error) {
 	var c Credentials
 	f, err := os.Open(s.path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return c, errors.New("encrypted credentials file not found; check credentials_file and container mount")
+		}
+		if errors.Is(err, os.ErrPermission) {
+			return c, errors.New("permission denied reading encrypted credentials; check container user and file permissions or NAS ACLs")
+		}
 		return c, errors.New("cannot open encrypted credentials")
 	}
 	defer f.Close()
@@ -86,7 +92,7 @@ func (s *Store) read(id *age.X25519Identity) (Credentials, error) {
 	}
 	r, err := age.Decrypt(io.LimitReader(f, MaxFileSize), id)
 	if err != nil {
-		return c, errors.New("cannot decrypt credentials")
+		return c, errors.New("cannot decrypt credentials; key does not match or encrypted file is invalid")
 	}
 	plain, err := io.ReadAll(io.LimitReader(r, MaxFileSize+1))
 	if err != nil || len(plain) > MaxFileSize {
@@ -104,7 +110,7 @@ func (s *Store) read(id *age.X25519Identity) (Credentials, error) {
 	for _, name := range s.accounts {
 		credential, ok := c.Accounts[name]
 		if !ok || credential.Username == "" || credential.Password == "" {
-			return Credentials{}, errors.New("credentials missing for a configured account")
+			return Credentials{}, errors.New("credentials missing for a configured account; check account names and stored username/password")
 		}
 	}
 	return c, nil
