@@ -26,6 +26,11 @@ const testToken = "test-token-with-at-least-32-characters"
 
 func uiFixture(t *testing.T) (*UI, string) {
 	t.Helper()
+	return uiFixtureWithLogs(t, io.Discard)
+}
+
+func uiFixtureWithLogs(t *testing.T, logs io.Writer) (*UI, string) {
+	t.Helper()
 	dir := t.TempDir()
 	id, _ := age.GenerateX25519Identity()
 	var buf bytes.Buffer
@@ -35,7 +40,7 @@ func uiFixture(t *testing.T) (*UI, string) {
 	tokenPath := filepath.Join(dir, "token")
 	_ = os.WriteFile(tokenPath, []byte(testToken), 0600)
 	engine := &job.Engine{Config: config.Config{JobTimeout: "1s"}, Store: secrets.New(path, []string{"personal"})}
-	service := job.NewService(engine, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service := job.NewService(engine, slog.New(slog.NewTextHandler(logs, nil)))
 	ui, err := New(context.Background(), config.Web{TokenFile: tokenPath, SecureCookies: true}, service)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +141,7 @@ func TestSignInAndUnlockFailuresAreEnglish(t *testing.T) {
 	}
 	cookie, csrf := logIn(t, handler)
 	w = request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {"invalid"}}, cookie, "")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Unlock failed: check the key, file, or running job.") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Unlock failed: invalid age private key.") {
 		t.Fatal("missing English unlock failure message")
 	}
 	if ui.service.Status().Unlocked {
@@ -144,8 +149,89 @@ func TestSignInAndUnlockFailuresAreEnglish(t *testing.T) {
 	}
 }
 
+func TestUnlockDiagnosticsAreLoggedWithoutSecrets(t *testing.T) {
+	for _, kind := range []string{"invalid key", "wrong key", "missing file", "invalid file", "missing account", "invalid structure"} {
+		t.Run(kind, func(t *testing.T) {
+			var logs bytes.Buffer
+			ui, key := uiFixtureWithLogs(t, &logs)
+			path := filepath.Join(filepath.Dir(ui.config.TokenFile), "credentials.age")
+			want := ""
+			switch kind {
+			case "invalid key":
+				key = "invalid-private-key-input"
+				want = "invalid age private key"
+			case "wrong key":
+				other, err := age.GenerateX25519Identity()
+				if err != nil {
+					t.Fatal(err)
+				}
+				key = other.String()
+				want = "cannot decrypt credentials; key does not match or encrypted file is invalid"
+			case "missing file":
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				want = "encrypted credentials file not found; check credentials_file and container mount"
+			case "invalid file":
+				if err := os.WriteFile(path, []byte("invalid-encrypted-file-content"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				want = "cannot decrypt credentials; key does not match or encrypted file is invalid"
+			case "missing account", "invalid structure":
+				id, err := age.ParseX25519Identity(key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var encrypted bytes.Buffer
+				w, err := age.Encrypt(&encrypted, id.Recipient())
+				if err != nil {
+					t.Fatal(err)
+				}
+				plain := `{"accounts":{"other":{"username":"private-username","password":"mail-password"}}}`
+				want = "credentials missing for a configured account; check account names and stored username/password"
+				if kind == "invalid structure" {
+					plain = `{"private-username":"mail-password"}`
+					want = "invalid encrypted credential structure"
+				}
+				if _, err := io.WriteString(w, plain); err != nil {
+					t.Fatal(err)
+				}
+				if err := w.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, encrypted.Bytes(), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			handler := ui.Handler()
+			cookie, csrf := logIn(t, handler)
+			w := request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {key}}, cookie, "")
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Unlock failed: "+want+".") {
+				t.Fatalf("missing unlock diagnostic: %s", w.Body.String())
+			}
+			if !strings.Contains(logs.String(), "unlock failed") || !strings.Contains(logs.String(), want) {
+				t.Fatalf("missing unlock log: %s", logs.String())
+			}
+			if ui.service.Status().Unlocked {
+				t.Fatal("failed unlock changed state")
+			}
+			for _, secret := range []string{key, testToken, csrf, cookie.Value, "private-username", "mail-password", "invalid-encrypted-file-content"} {
+				if strings.Contains(logs.String(), secret) {
+					t.Fatal("secret leaked into log")
+				}
+			}
+			for _, secret := range []string{key, testToken, cookie.Value, "private-username", "mail-password", "invalid-encrypted-file-content"} {
+				if strings.Contains(w.Body.String(), secret) {
+					t.Fatal("secret reflected into page")
+				}
+			}
+		})
+	}
+}
+
 func TestUnlockLockAndLogout(t *testing.T) {
-	ui, key := uiFixture(t)
+	var logs bytes.Buffer
+	ui, key := uiFixtureWithLogs(t, &logs)
 	handler := ui.Handler()
 	cookie, csrf := logIn(t, handler)
 	w := request(handler, "POST", "/unlock", url.Values{"csrf": {csrf}, "key": {key}}, cookie, "")
@@ -154,6 +240,9 @@ func TestUnlockLockAndLogout(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "Unlocked. Scheduled jobs can now run.") {
 		t.Fatal("missing English unlock message")
+	}
+	if !strings.Contains(logs.String(), "service unlocked") || strings.Contains(logs.String(), key) || strings.Contains(logs.String(), "mail-password") {
+		t.Fatal("missing or unsafe unlock success log")
 	}
 	if strings.Contains(w.Body.String(), key) || strings.Contains(w.Body.String(), "mail-password") {
 		t.Fatal("secret reflected into page")

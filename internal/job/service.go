@@ -35,10 +35,19 @@ func NewService(engine *Engine, log *slog.Logger) *Service {
 func (s *Service) Unlock(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var err error
 	if s.running {
-		return ErrBusy
+		err = ErrBusy
+	} else {
+		err = s.engine.Store.Unlock(key)
 	}
-	return s.engine.Store.Unlock(key)
+	// Unlock errors are sanitized by the credential store; never log the key.
+	if err != nil {
+		s.log.Warn("unlock failed", "reason", err.Error())
+		return err
+	}
+	s.log.Info("service unlocked")
+	return nil
 }
 
 // Lock also interrupts active IMAP connections through the job context.
