@@ -65,6 +65,32 @@ func TestNewEngineHealthchecksURLPermissions(t *testing.T) {
 	}
 }
 
+func TestCheckHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, output string
+		wantErr              bool
+	}{
+		{"unlocked", `{"unlocked":true,"running":false}`, "{\"healthy\":true,\"unlocked\":true}\n", false},
+		{"running", `{"unlocked":true,"running":true}`, "{\"healthy\":true,\"unlocked\":true}\n", false},
+		{"locked", `{"unlocked":false}`, "{\"healthy\":false,\"unlocked\":false}\n", true},
+		{"missing state", `{}`, "", true},
+		{"null state", `{"unlocked":null}`, "", true},
+		{"invalid state", `{"unlocked":"true"}`, "", true},
+		{"invalid JSON", `not JSON`, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := checkHealth(&output, []byte(tc.status))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if output.String() != tc.output {
+				t.Fatalf("expected %q, got %q", tc.output, output.String())
+			}
+		})
+	}
+}
+
 func TestServeLockedUnlockRunLockAndStopWithWebDisabled(t *testing.T) {
 	dir, err := os.MkdirTemp(".", ".daemon-test-")
 	if err != nil {
@@ -115,6 +141,17 @@ func TestServeLockedUnlockRunLockAndStopWithWebDisabled(t *testing.T) {
 	if status.Unlocked || status.Running || !status.DryRun {
 		t.Fatal("unsafe initial status")
 	}
+	check := func(wantErr bool) {
+		t.Helper()
+		err := run(context.Background(), []string{"healthcheck", "--socket", c.Socket})
+		if (err != nil) != wantErr {
+			t.Fatalf("unexpected healthcheck result: %v", err)
+		}
+	}
+	check(true)
+	if err := run(context.Background(), []string{"status", "--socket", c.Socket}); err != nil {
+		t.Fatalf("status must succeed while locked: %v", err)
+	}
 	post := func(path, body string, expected int) {
 		t.Helper()
 		r, err := client.Post("http://localhost/"+path, "text/plain", strings.NewReader(body))
@@ -129,8 +166,10 @@ func TestServeLockedUnlockRunLockAndStopWithWebDisabled(t *testing.T) {
 	}
 	post("run", "", http.StatusConflict)
 	post("unlock", id.String(), http.StatusNoContent)
+	check(false)
 	post("run", "", http.StatusAccepted)
 	post("lock", "", http.StatusNoContent)
+	check(true)
 	client.CloseIdleConnections()
 	cancel()
 	select {
@@ -144,12 +183,14 @@ func TestServeLockedUnlockRunLockAndStopWithWebDisabled(t *testing.T) {
 	if _, err := os.Stat(c.Socket); !os.IsNotExist(err) {
 		t.Fatal("control socket not cleaned up")
 	}
+	check(true)
 }
 
 func TestCommandsRejectKeyArgumentsAndUnknownCommands(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"unknown"}, {"unlock", "--key", "never-pass-secrets-here"},
 		{"serve", "--key-stdin"}, {"status", "--key-stdin"},
+		{"healthcheck", "--key-stdin"}, {"healthcheck", "unexpected"},
 		{"credentials"}, {"web-token", "unexpected"},
 	} {
 		if run(context.Background(), args) == nil {

@@ -92,8 +92,9 @@ Encryption at rest does not prevent this.
 - No Docker socket in the application container.
 - Only the private control socket resides in the RAM filesystem.
   The private age key is not stored as a file there either.
-- The healthcheck deliberately reports a locked service as healthy.
-  After maintenance/restarts, verify unlocking and actual job results.
+- The healthcheck reports a locked service as unhealthy and returns the unlock
+  state through the private control socket. It does not test IMAP connectivity
+  or job success. After maintenance/restarts, unlock and verify actual job results.
 - The last result and browser sessions are held only in memory. Logs contain
   account/rule aliases, counts, and generic errors, not credentials.
   Protect these metadata and log retention appropriately as well.
